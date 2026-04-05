@@ -1,0 +1,2734 @@
+const express = require("express");
+const { body } = require("express-validator");
+const { protect, authorize, validate, asyncHandler } = require("../middleware");
+const ctrl = require("../controllers");
+const { query: q, withTransaction: wt } = require("../config/database");
+
+const router = express.Router();
+
+// ── PLANS ─────────────────────────────────────────────────────
+router.get("/plans", asyncHandler(async (req, res) => {
+  const plans = [
+    {
+      id: "STARTER",
+      name: "Starter",
+      price: 0,
+      currency: "NGN",
+      interval: "month",
+      description: "Perfect for getting started",
+      maxProjects: 2,
+      maxUsers: 5,
+      features: [
+        "2 active projects",
+        "5 team members",
+        "Basic reports",
+        "Material tracking",
+        "Site diary",
+        "Standard support",
+      ],
+      isFree: true,
+    },
+    {
+      id: "PRO",
+      name: "Pro",
+      price: 15000,
+      currency: "NGN",
+      interval: "month",
+      description: "For growing construction firms",
+      maxProjects: 10,
+      maxUsers: 25,
+      features: [
+        "10 active projects",
+        "25 team members",
+        "Advanced reports",
+        "All modules included",
+        "Client portal",
+        "Priority support",
+        "Data export",
+      ],
+      isFree: false,
+      isPopular: true,
+    },
+    {
+      id: "ENTERPRISE",
+      name: "Enterprise",
+      price: 40000,
+      currency: "NGN",
+      interval: "month",
+      description: "For large construction companies",
+      maxProjects: 999,
+      maxUsers: 999,
+      features: [
+        "Unlimited projects",
+        "Unlimited team members",
+        "White label branding",
+        "Dedicated account manager",
+        "Custom integrations",
+        "SLA support",
+        "AI features included",
+      ],
+      isFree: false,
+    },
+  ];
+  res.json({ success: true, data: plans });
+}));
+
+// ── AUTH ──────────────────────────────────────────────────────
+router.post(
+  "/auth/register",
+  [
+    body("firstName").trim().notEmpty(),
+    body("lastName").trim().notEmpty(),
+    body("email").isEmail().normalizeEmail(),
+    body("password").isLength({ min: 8 }),
+    body("companyName").trim().notEmpty(),
+    validate,
+  ],
+  ctrl.auth.register,
+);
+router.post(
+  "/auth/login",
+  [
+    body("email").isEmail().normalizeEmail(),
+    body("password").notEmpty(),
+    validate,
+  ],
+  ctrl.auth.login,
+);
+router.post("/auth/refresh", ctrl.auth.refresh);
+router.post("/auth/logout", protect, ctrl.auth.logout);
+router.post(
+  "/auth/forgot-password",
+  [body("email").isEmail().normalizeEmail(), validate],
+  ctrl.auth.forgotPassword,
+);
+router.post(
+  "/auth/reset-password",
+  [body("token").notEmpty(), body("password").isLength({ min: 8 }), validate],
+  ctrl.auth.resetPassword,
+);
+router.get("/auth/me", protect, ctrl.auth.getMe);
+router.post(
+  "/auth/push-token",
+  protect,
+  [body("pushToken").notEmpty(), validate],
+  ctrl.auth.updatePushToken,
+);
+
+// ── DASHBOARD ─────────────────────────────────────────────────
+router.get("/dashboard/summary", protect, ctrl.dashboard.getSummary);
+
+// ── PROJECTS ──────────────────────────────────────────────────
+router.get("/projects", protect, ctrl.projects.getAll);
+router.post(
+  "/projects",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  [body("name").trim().notEmpty(), body("type").trim().notEmpty(), validate],
+  ctrl.projects.create,
+);
+router.get(
+  "/projects/switcher",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "SELECT id, name, type, status, location FROM projects WHERE company_id=$1 AND status='ACTIVE' ORDER BY name",
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+router.get("/projects/:id", protect, ctrl.projects.getOne);
+router.put(
+  "/projects/:id",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SITE_MANAGER"),
+  ctrl.projects.update,
+);
+router.delete(
+  "/projects/:id",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  ctrl.projects.delete,
+);
+
+// ── MATERIALS ─────────────────────────────────────────────────
+router.get("/materials/low-stock", protect, ctrl.materials.getLowStock);
+router.get("/materials", protect, ctrl.materials.getAll);
+router.post(
+  "/materials",
+  protect,
+  [
+    body("name").trim().notEmpty(),
+    body("category").trim().notEmpty(),
+    body("unit").trim().notEmpty(),
+    validate,
+  ],
+  ctrl.materials.create,
+);
+router.get("/materials/:id", protect, ctrl.materials.getOne);
+router.put("/materials/:id", protect, ctrl.materials.update);
+router.delete("/materials/:id", protect, ctrl.materials.delete);
+router.post(
+  "/materials/:id/stock-in",
+  protect,
+  [body("quantity").isNumeric().toFloat(), validate],
+  ctrl.materials.stockIn,
+);
+router.post(
+  "/materials/:id/stock-out",
+  protect,
+  [body("quantity").isNumeric().toFloat(), validate],
+  ctrl.materials.stockOut,
+);
+
+// ── EQUIPMENT ─────────────────────────────────────────────────
+router.get("/equipment", protect, ctrl.equipment.getAll);
+router.post(
+  "/equipment",
+  protect,
+  [body("name").trim().notEmpty(), body("type").trim().notEmpty(), validate],
+  ctrl.equipment.create,
+);
+router.get("/equipment/:id", protect, ctrl.equipment.getOne);
+router.put("/equipment/:id", protect, ctrl.equipment.update);
+router.delete("/equipment/:id", protect, ctrl.equipment.delete);
+router.post("/equipment/:id/start-usage", protect, ctrl.equipment.startUsage);
+router.post("/equipment/:id/end-usage", protect, ctrl.equipment.endUsage);
+router.post(
+  "/equipment/:id/maintenance",
+  protect,
+  [body("description").trim().notEmpty(), validate],
+  ctrl.equipment.logMaintenance,
+);
+
+// ── BUDGETS ───────────────────────────────────────────────────
+router.get("/budgets/summary/:projectId", protect, ctrl.budgets.getSummary);
+router.get("/budgets", protect, ctrl.budgets.getAll);
+router.post(
+  "/budgets",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "QS_ESTIMATOR"),
+  [
+    body("projectId").notEmpty().withMessage("Project ID is required"),
+    body("category").trim().notEmpty(),
+    body("allocated").isNumeric(),
+    validate,
+  ],
+  ctrl.budgets.create,
+);
+router.put(
+  "/budgets/:id",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "QS_ESTIMATOR"),
+  ctrl.budgets.update,
+);
+
+// ── EXPENSES ──────────────────────────────────────────────────
+router.get("/expenses", protect, ctrl.expenses.getAll);
+router.post(
+  "/expenses",
+  protect,
+  [
+    body("projectId").notEmpty().withMessage("Project ID is required"),
+    body("category").trim().notEmpty(),
+    body("description").trim().notEmpty(),
+    body("amount").isNumeric(),
+    validate,
+  ],
+  ctrl.expenses.create,
+);
+router.patch(
+  "/expenses/:id/approve",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "ACCOUNTANT"),
+  ctrl.expenses.approve,
+);
+router.patch(
+  "/expenses/:id/reject",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "ACCOUNTANT"),
+  ctrl.expenses.reject,
+);
+router.delete("/expenses/:id", protect, ctrl.expenses.delete);
+
+// ── VISITORS ──────────────────────────────────────────────────
+router.get("/visitors", protect, ctrl.visitors.getAll);
+router.post(
+  "/visitors",
+  protect,
+  [
+    body("projectId").isUUID(),
+    body("fullName").trim().notEmpty(),
+    body("purpose").trim().notEmpty(),
+    validate,
+  ],
+  ctrl.visitors.create,
+);
+router.patch("/visitors/:id/checkout", protect, ctrl.visitors.checkout);
+router.delete("/visitors/:id", protect, ctrl.visitors.delete);
+
+// ── ATTENDANCE ────────────────────────────────────────────────
+router.post(
+  "/attendance/check-in",
+  protect,
+  [body("projectId").isUUID(), validate],
+  ctrl.attendance.checkIn,
+);
+router.patch("/attendance/:id/check-out", protect, ctrl.attendance.checkOut);
+router.get("/attendance", protect, ctrl.attendance.getAll);
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────
+router.get("/notifications", protect, ctrl.notifications.getAll);
+router.patch("/notifications/read-all", protect, ctrl.notifications.readAll);
+router.patch("/notifications/:id/read", protect, ctrl.notifications.readOne);
+
+// ── COMPANY BRANDING ──────────────────────────────────────────
+router.patch(
+  "/company/branding",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  asyncHandler(async (req, res) => {
+    const { logoUrl, primaryColor, secondaryColor, tagline, name } = req.body;
+    const updated = await q(
+      `UPDATE companies SET
+      logo_url = COALESCE($1, logo_url),
+      primary_color = COALESCE($2, primary_color),
+      secondary_color = COALESCE($3, secondary_color),
+      tagline = COALESCE($4, tagline),
+      name = COALESCE($5, name),
+      updated_at = NOW()
+     WHERE id = $6 RETURNING *`,
+      [
+        logoUrl || null,
+        primaryColor || null,
+        secondaryColor || null,
+        tagline || null,
+        name || null,
+        req.user.companyId,
+      ],
+    );
+    res.json({ success: true, data: updated.rows[0] });
+  }),
+);
+
+// ── USER AVATAR ───────────────────────────────────────────────
+router.patch(
+  "/users/avatar",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { avatarUrl } = req.body;
+    if (!avatarUrl)
+      return res
+        .status(400)
+        .json({ success: false, message: "avatarUrl required" });
+    const { rows } = await q(
+      "UPDATE users SET avatar_url=$1, updated_at=NOW() WHERE id=$2 RETURNING *",
+      [avatarUrl, req.user.userId],
+    );
+    return res.json({ success: true, debug: req.user });
+  }),
+);
+
+// ── USERS ─────────────────────────────────────────────────────
+router.get(
+  "/users",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  ctrl.users.getAll,
+);
+router.post(
+  "/users/invite",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  [body("email").isEmail().normalizeEmail(), body("role").notEmpty(), validate],
+  ctrl.users.invite,
+);
+router.patch("/users/:id", protect, ctrl.users.update);
+router.patch(
+  "/users/:id/toggle-active",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  ctrl.users.toggleActive,
+);
+
+// ── SYNC ──────────────────────────────────────────────────────
+router.get("/sync/pull", protect, ctrl.sync.pull);
+router.post(
+  "/sync/push",
+  protect,
+  [body("operations").isArray(), validate],
+  ctrl.sync.push,
+);
+
+// ── AI ────────────────────────────────────────────────────────
+router.post(
+  "/ai/cost-prediction",
+  protect,
+  [body("projectId").isUUID(), validate],
+  ctrl.ai.costPrediction,
+);
+router.post("/ai/smart-reorder", protect, ctrl.ai.smartReorder);
+router.post(
+  "/ai/site-summary",
+  protect,
+  [body("projectId").isUUID(), validate],
+  ctrl.ai.siteSummary,
+);
+
+// ── REPORTS ───────────────────────────────────────────────────
+router.get("/reports/materials/pdf", protect, ctrl.reports.materialsPDF);
+router.get("/reports/budget/pdf", protect, ctrl.reports.budgetPDF);
+router.get("/reports/visitors/pdf", protect, ctrl.reports.visitorsPDF);
+router.get("/reports/materials/excel", protect, ctrl.reports.materialsExcel);
+
+// ── SUPPLIERS ─────────────────────────────────────────────────
+router.get(
+  "/suppliers",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "SELECT * FROM suppliers WHERE company_id=$1 AND is_active=TRUE ORDER BY name",
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+router.post(
+  "/suppliers",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      name,
+      contactName,
+      phone,
+      email,
+      address,
+      category,
+      rating,
+      notes,
+      bankName,
+      accountNumber,
+      accountName,
+    } = req.body;
+    const { rows } = await q(
+      `INSERT INTO suppliers (company_id, name, contact_name, phone, email, address, category, rating, notes, bank_name, account_number, account_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        req.user.companyId,
+        name,
+        contactName || null,
+        phone || null,
+        email || null,
+        address || null,
+        category || null,
+        rating || 0,
+        notes || null,
+        bankName || null,
+        accountNumber || null,
+        accountName || null,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.put(
+  "/suppliers/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      name,
+      contactName,
+      phone,
+      email,
+      address,
+      category,
+      rating,
+      notes,
+      bankName,
+      accountNumber,
+      accountName,
+    } = req.body;
+    const { rows } = await q(
+      `UPDATE suppliers SET 
+      name=$1, contact_name=$2, phone=$3, email=$4, address=$5,
+      category=$6, rating=$7, notes=$8, bank_name=$9,
+      account_number=$10, account_name=$11, updated_at=NOW()
+     WHERE id=$12 AND company_id=$13 RETURNING *`,
+      [
+        name,
+        contactName || null,
+        phone || null,
+        email || null,
+        address || null,
+        category || null,
+        rating || 0,
+        notes || null,
+        bankName || null,
+        accountNumber || null,
+        accountName || null,
+        req.params.id,
+        req.user.companyId,
+      ],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── PURCHASE ORDERS ───────────────────────────────────────────
+router.get(
+  "/purchase-orders",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "SELECT po.*, s.name AS supplier_name, p.name AS project_name FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id JOIN projects p ON p.id=po.project_id WHERE p.company_id=$1 ORDER BY po.created_at DESC",
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+router.post(
+  "/purchase-orders",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, supplierId, items = [], notes, expectedAt } = req.body;
+    const poNumber = `PO-${Date.now().toString().slice(-8)}`;
+    const total = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const po = await wt(async (client) => {
+      const { rows } = await client.query(
+        "INSERT INTO purchase_orders (project_id,supplier_id,created_by_id,po_number,total_amount,notes,expected_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+        [
+          projectId,
+          supplierId,
+          req.user.userId,
+          poNumber,
+          total,
+          notes || null,
+          expectedAt || null,
+        ],
+      );
+      for (const item of items)
+        await client.query(
+          "INSERT INTO po_items (purchase_order_id,description,quantity,unit,unit_price,total_price) VALUES ($1,$2,$3,$4,$5,$6)",
+          [
+            rows[0].id,
+            item.description,
+            item.quantity,
+            item.unit,
+            item.unitPrice,
+            item.quantity * item.unitPrice,
+          ],
+        );
+      return rows[0];
+    });
+    res.status(201).json({ success: true, data: po });
+  }),
+);
+router.patch(
+  "/purchase-orders/:id/status",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "UPDATE purchase_orders SET status=$1,delivered_at=CASE WHEN $1='DELIVERED' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$2 RETURNING *",
+      [req.body.status, req.params.id],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── SUBCONTRACTS ──────────────────────────────────────────────
+router.get(
+  "/subcontracts",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "SELECT s.* FROM subcontracts s JOIN projects p ON p.id=s.project_id WHERE p.company_id=$1 ORDER BY s.created_at DESC",
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+router.post(
+  "/subcontracts",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "INSERT INTO subcontracts (project_id,company_name,contact_name,phone,email,scope,contract_value,start_date,end_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+      [
+        req.body.projectId,
+        req.body.companyName,
+        req.body.contactName || null,
+        req.body.phone || null,
+        req.body.email || null,
+        req.body.scope,
+        req.body.contractValue,
+        req.body.startDate || null,
+        req.body.endDate || null,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── EMPLOYEES ─────────────────────────────────────────────────
+router.get("/employees", protect, ctrl.employees.getAll);
+router.post(
+  "/employees",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SITE_MANAGER"),
+  [
+    body("firstName").trim().notEmpty(),
+    body("lastName").trim().notEmpty(),
+    validate,
+  ],
+  ctrl.employees.create,
+);
+router.get("/employees/payroll", protect, ctrl.employees.getPayroll);
+router.get("/employees/:id", protect, ctrl.employees.getOne);
+router.put("/employees/:id", protect, ctrl.employees.update);
+router.patch(
+  "/employees/:id/status",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  ctrl.employees.setStatus,
+);
+router.post("/employees/:id/documents", protect, ctrl.employees.addDocument);
+
+// ── BILLING ───────────────────────────────────────────────────
+router.get("/billing/subscription", protect, ctrl.billing.getSubscription);
+router.post(
+  "/billing/initialize",
+  protect,
+  [body("plan").notEmpty(), body("email").isEmail(), validate],
+  ctrl.billing.initialize,
+);
+router.post(
+  "/billing/verify",
+  protect,
+  [body("reference").notEmpty(), validate],
+  ctrl.billing.verify,
+);
+router.post("/billing/webhook", ctrl.billing.webhook);
+router.get("/billing/history", protect, ctrl.billing.getHistory);
+
+// ── FILE UPLOADS ──────────────────────────────────────────────
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+const uploadDir = path.join(__dirname, "../../uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const folder = req.body.folder || "general";
+    const dir = path.join(uploadDir, folder);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
+
+router.post("/uploads", protect, upload.single("file"), (req, res) => {
+  if (!req.file)
+    return res
+      .status(400)
+      .json({ success: false, message: "No file uploaded" });
+  const folder = req.body.folder || "general";
+  const url = `${process.env.API_URL || "http://localhost:5000"}/uploads/${folder}/${req.file.filename}`;
+  res.json({
+    success: true,
+    data: {
+      url,
+      filename: req.file.filename,
+      size: req.file.size,
+      mimeType: req.file.mimetype,
+    },
+  });
+});
+
+// ── SITE DIARY ────────────────────────────────────────────────
+router.get(
+  "/site-diary",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, startDate, endDate, limit = 30 } = req.query;
+    const conds = ["p.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (projectId) {
+      conds.push(`sd.project_id = $${i++}`);
+      params.push(projectId);
+    }
+    if (startDate) {
+      conds.push(`sd.diary_date >= $${i++}`);
+      params.push(startDate);
+    }
+    if (endDate) {
+      conds.push(`sd.diary_date <= $${i++}`);
+      params.push(endDate);
+    }
+    params.push(limit);
+    const { rows } = await q(
+      `SELECT sd.*, u.first_name, u.last_name, p.name AS project_name
+     FROM site_diary sd
+     JOIN projects p ON p.id = sd.project_id
+     JOIN users u ON u.id = sd.created_by_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY sd.diary_date DESC
+     LIMIT $${i}`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.get(
+  "/site-diary/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT sd.*, u.first_name, u.last_name, p.name AS project_name
+     FROM site_diary sd
+     JOIN projects p ON p.id = sd.project_id
+     JOIN users u ON u.id = sd.created_by_id
+     WHERE sd.id = $1`,
+      [req.params.id],
+    );
+    if (!rows[0])
+      throw new (require("../utils/errors").NotFoundError)("Diary entry");
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.post(
+  "/site-diary",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      diaryDate,
+      weather,
+      temperature,
+      workersPresent,
+      workSummary,
+      issues,
+      safetyObservations,
+      materialsUsed,
+      equipmentUsed,
+      visitorsCount,
+      photos,
+      status,
+    } = req.body;
+    if (!projectId || !workSummary) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId and workSummary required",
+      });
+    }
+    const { rows } = await q(
+      `INSERT INTO site_diary 
+     (project_id, created_by_id, diary_date, weather, temperature, workers_present,
+      work_summary, issues, safety_observations, materials_used, equipment_used,
+      visitors_count, photos, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (project_id, diary_date) 
+     DO UPDATE SET
+       weather = EXCLUDED.weather,
+       temperature = EXCLUDED.temperature,
+       workers_present = EXCLUDED.workers_present,
+       work_summary = EXCLUDED.work_summary,
+       issues = EXCLUDED.issues,
+       safety_observations = EXCLUDED.safety_observations,
+       materials_used = EXCLUDED.materials_used,
+       equipment_used = EXCLUDED.equipment_used,
+       visitors_count = EXCLUDED.visitors_count,
+       photos = EXCLUDED.photos,
+       status = EXCLUDED.status,
+       updated_at = NOW()
+     RETURNING *`,
+      [
+        projectId,
+        req.user.userId,
+        diaryDate || new Date().toISOString().split("T")[0],
+        weather || "Sunny",
+        temperature || null,
+        workersPresent || 0,
+        workSummary,
+        issues || null,
+        safetyObservations || null,
+        materialsUsed || null,
+        equipmentUsed || null,
+        visitorsCount || 0,
+        JSON.stringify(photos || []),
+        status || "DRAFT",
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.put(
+  "/site-diary/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `UPDATE site_diary SET
+       weather = $1, temperature = $2, workers_present = $3,
+       work_summary = $4, issues = $5, safety_observations = $6,
+       materials_used = $7, equipment_used = $8, visitors_count = $9,
+       photos = $10, status = $11, updated_at = NOW()
+     WHERE id = $12 RETURNING *`,
+      [
+        req.body.weather,
+        req.body.temperature,
+        req.body.workersPresent,
+        req.body.workSummary,
+        req.body.issues,
+        req.body.safetyObservations,
+        req.body.materialsUsed,
+        req.body.equipmentUsed,
+        req.body.visitorsCount,
+        JSON.stringify(req.body.photos || []),
+        req.body.status || "DRAFT",
+        req.params.id,
+      ],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/site-diary/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM site_diary WHERE id = $1", [req.params.id]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// ── TIMESHEETS ────────────────────────────────────────────────
+router.get(
+  "/timesheets",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, weekStart, employeeId, status } = req.query;
+    const conds = ["t.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (projectId) {
+      conds.push(`t.project_id = $${i++}`);
+      params.push(projectId);
+    }
+    if (weekStart) {
+      conds.push(`t.week_start = $${i++}`);
+      params.push(weekStart);
+    }
+    if (employeeId) {
+      conds.push(`t.employee_id = $${i++}`);
+      params.push(employeeId);
+    }
+    if (status) {
+      conds.push(`t.status = $${i++}`);
+      params.push(status);
+    }
+    const { rows } = await q(
+      `SELECT t.*, 
+      e.first_name, e.last_name, e.role, e.department,
+      p.name AS project_name
+     FROM timesheets t
+     JOIN employees e ON e.id = t.employee_id
+     JOIN projects p ON p.id = t.project_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY t.week_start DESC, e.first_name`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/timesheets",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      employeeId,
+      weekStart,
+      weekEnd,
+      monHours,
+      tueHours,
+      wedHours,
+      thuHours,
+      friHours,
+      satHours,
+      sunHours,
+      notes,
+    } = req.body;
+
+    // Get employee daily rate
+    const { rows: empRows } = await q(
+      "SELECT daily_rate FROM employees WHERE id = $1 AND company_id = $2",
+      [employeeId, req.user.companyId],
+    );
+    if (!empRows[0]) throw new Error("Employee not found");
+    const dailyRate = empRows[0].daily_rate;
+
+    const { rows } = await q(
+      `INSERT INTO timesheets 
+     (company_id, project_id, employee_id, week_start, week_end,
+      mon_hours, tue_hours, wed_hours, thu_hours, fri_hours, sat_hours, sun_hours,
+      daily_rate, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (employee_id, week_start, project_id)
+     DO UPDATE SET
+       mon_hours = EXCLUDED.mon_hours, tue_hours = EXCLUDED.tue_hours,
+       wed_hours = EXCLUDED.wed_hours, thu_hours = EXCLUDED.thu_hours,
+       fri_hours = EXCLUDED.fri_hours, sat_hours = EXCLUDED.sat_hours,
+       sun_hours = EXCLUDED.sun_hours, notes = EXCLUDED.notes,
+       updated_at = NOW()
+     RETURNING *`,
+      [
+        req.user.companyId,
+        projectId,
+        employeeId,
+        weekStart,
+        weekEnd,
+        monHours || 0,
+        tueHours || 0,
+        wedHours || 0,
+        thuHours || 0,
+        friHours || 0,
+        satHours || 0,
+        sunHours || 0,
+        dailyRate,
+        notes || null,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/timesheets/:id/approve",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "ACCOUNTANT"),
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `UPDATE timesheets SET status='APPROVED', approved_by_id=$1, approved_at=NOW(), updated_at=NOW()
+     WHERE id=$2 RETURNING *`,
+      [req.user.userId, req.params.id],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/timesheets/:id/submit",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      "UPDATE timesheets SET status='SUBMITTED', updated_at=NOW() WHERE id=$1 RETURNING *",
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/timesheets/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM timesheets WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+router.get(
+  "/timesheets/summary",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { weekStart, projectId } = req.query;
+    const conds = ["t.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (weekStart) {
+      conds.push(`t.week_start = $${i++}`);
+      params.push(weekStart);
+    }
+    if (projectId) {
+      conds.push(`t.project_id = $${i++}`);
+      params.push(projectId);
+    }
+    const { rows } = await q(
+      `SELECT 
+      COUNT(*)::int AS total_employees,
+      COALESCE(SUM(t.total_hours), 0)::numeric AS total_hours,
+      COALESCE(SUM(t.total_pay), 0)::numeric AS total_pay,
+      COUNT(*) FILTER (WHERE t.status = 'APPROVED')::int AS approved_count,
+      COUNT(*) FILTER (WHERE t.status = 'SUBMITTED')::int AS submitted_count,
+      COUNT(*) FILTER (WHERE t.status = 'DRAFT')::int AS draft_count
+     FROM timesheets t
+     WHERE ${conds.join(" AND ")}`,
+      params,
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── MAINTENANCE SCHEDULES ─────────────────────────────────────
+router.get(
+  "/maintenance",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { equipmentId, status, priority } = req.query;
+    const conds = ["ms.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (equipmentId) {
+      conds.push(`ms.equipment_id = $${i++}`);
+      params.push(equipmentId);
+    }
+    if (status) {
+      conds.push(`ms.status = $${i++}`);
+      params.push(status);
+    }
+    if (priority) {
+      conds.push(`ms.priority = $${i++}`);
+      params.push(priority);
+    }
+    const { rows } = await q(
+      `SELECT ms.*, e.name AS equipment_name, e.type AS equipment_type,
+      u.first_name, u.last_name
+     FROM maintenance_schedules ms
+     JOIN equipment e ON e.id = ms.equipment_id
+     LEFT JOIN users u ON u.id = ms.created_by_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY ms.scheduled_date ASC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/maintenance",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      equipmentId,
+      title,
+      description,
+      maintenanceType,
+      scheduledDate,
+      cost,
+      technicianName,
+      technicianPhone,
+      priority,
+      notes,
+      intervalDays,
+      photos,
+    } = req.body;
+    if (!equipmentId || !title || !scheduledDate) {
+      return res.status(400).json({
+        success: false,
+        message: "equipmentId, title and scheduledDate required",
+      });
+    }
+    const { rows } = await q(
+      `INSERT INTO maintenance_schedules
+     (company_id, equipment_id, title, description, maintenance_type,
+      scheduled_date, cost, technician_name, technician_phone,
+      priority, notes, interval_days, photos, created_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [
+        req.user.companyId,
+        equipmentId,
+        title,
+        description || null,
+        maintenanceType || "ROUTINE",
+        scheduledDate,
+        cost || 0,
+        technicianName || null,
+        technicianPhone || null,
+        priority || "MEDIUM",
+        notes || null,
+        intervalDays || 90,
+        JSON.stringify(photos || []),
+        req.user.userId,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/maintenance/:id/complete",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { completedDate, cost, technicianName, notes, photos } = req.body;
+    const { rows: existing } = await q(
+      "SELECT * FROM maintenance_schedules WHERE id=$1",
+      [req.params.id],
+    );
+    if (!existing[0]) throw new Error("Not found");
+    const nextDate = new Date(completedDate || new Date());
+    nextDate.setDate(nextDate.getDate() + (existing[0].interval_days || 90));
+    const { rows } = await q(
+      `UPDATE maintenance_schedules SET
+      status='COMPLETED', completed_date=$1, cost=$2,
+      technician_name=$3, notes=$4, photos=$5,
+      next_schedule_date=$6, updated_at=NOW()
+     WHERE id=$7 RETURNING *`,
+      [
+        completedDate || new Date().toISOString().split("T")[0],
+        cost || existing[0].cost,
+        technicianName || existing[0].technician_name,
+        notes || existing[0].notes,
+        JSON.stringify(photos || []),
+        nextDate.toISOString().split("T")[0],
+        req.params.id,
+      ],
+    );
+    // Auto-create next schedule
+    if (existing[0].interval_days) {
+      await q(
+        `INSERT INTO maintenance_schedules
+       (company_id, equipment_id, title, description, maintenance_type,
+        scheduled_date, priority, interval_days, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          existing[0].company_id,
+          existing[0].equipment_id,
+          existing[0].title,
+          existing[0].description,
+          existing[0].maintenance_type,
+          nextDate.toISOString().split("T")[0],
+          existing[0].priority,
+          existing[0].interval_days,
+          req.user.userId,
+        ],
+      );
+    }
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/maintenance/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      title,
+      description,
+      scheduledDate,
+      technicianName,
+      technicianPhone,
+      priority,
+      notes,
+      status,
+    } = req.body;
+    const { rows } = await q(
+      `UPDATE maintenance_schedules SET
+      title=COALESCE($1,title), description=COALESCE($2,description),
+      scheduled_date=COALESCE($3,scheduled_date),
+      technician_name=COALESCE($4,technician_name),
+      technician_phone=COALESCE($5,technician_phone),
+      priority=COALESCE($6,priority), notes=COALESCE($7,notes),
+      status=COALESCE($8,status), updated_at=NOW()
+     WHERE id=$9 AND company_id=$10 RETURNING *`,
+      [
+        title,
+        description,
+        scheduledDate,
+        technicianName,
+        technicianPhone,
+        priority,
+        notes,
+        status,
+        req.params.id,
+        req.user.companyId,
+      ],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/maintenance/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM maintenance_schedules WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+router.get(
+  "/maintenance/upcoming",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT ms.*, e.name AS equipment_name, e.type AS equipment_type
+     FROM maintenance_schedules ms
+     JOIN equipment e ON e.id = ms.equipment_id
+     WHERE ms.company_id=$1 AND ms.status='SCHEDULED'
+     AND ms.scheduled_date <= NOW() + INTERVAL '30 days'
+     ORDER BY ms.scheduled_date ASC
+     LIMIT 10`,
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+// ── MATERIAL PRICES ───────────────────────────────────────────
+
+router.get(
+  "/material-prices/summary",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT 
+      material_name, category, unit,
+      MAX(price) AS max_price,
+      MIN(price) AS min_price,
+      ROUND(AVG(price), 2) AS avg_price,
+      COUNT(*)::int AS records,
+      MAX(recorded_at) AS last_updated,
+      (ARRAY_AGG(price ORDER BY recorded_at DESC))[1] AS latest_price,
+      (ARRAY_AGG(price ORDER BY recorded_at DESC))[2] AS previous_price
+     FROM material_prices
+     WHERE company_id = $1
+     GROUP BY material_name, category, unit
+     ORDER BY material_name`,
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.get(
+  "/material-prices",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { materialName, category, limit = 50 } = req.query;
+    const conds = ["mp.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (materialName) {
+      conds.push(`mp.material_name ILIKE $${i++}`);
+      params.push(`%${materialName}%`);
+    }
+    if (category) {
+      conds.push(`mp.category = $${i++}`);
+      params.push(category);
+    }
+    params.push(Number(limit));
+    const { rows } = await q(
+      `SELECT mp.*, u.first_name, u.last_name
+   FROM material_prices mp
+   LEFT JOIN users u ON u.id = mp.recorded_by_id
+   WHERE ${conds.join(" AND ")}
+   ORDER BY mp.material_name, mp.recorded_at DESC
+   LIMIT $${i}`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.delete(
+  "/material-prices/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM material_prices WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// ── SUBCONTRACT MILESTONES & PAYMENTS ─────────────────────────
+router.get(
+  "/subcontracts/:id/milestones",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT m.*, 
+      COALESCE(SUM(p.amount), 0)::numeric AS paid_amount
+     FROM subcontract_milestones m
+     LEFT JOIN subcontract_payments p ON p.milestone_id = m.id
+     WHERE m.subcontract_id = $1
+     GROUP BY m.id
+     ORDER BY m.due_date ASC NULLS LAST, m.created_at ASC`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/subcontracts/:id/milestones",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { title, description, amount, dueDate, notes } = req.body;
+    if (!title || !amount) {
+      return res
+        .status(400)
+        .json({ success: false, message: "title and amount required" });
+    }
+    const { rows } = await q(
+      `INSERT INTO subcontract_milestones
+     (subcontract_id, title, description, amount, due_date, notes)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        req.params.id,
+        title,
+        description || null,
+        amount,
+        dueDate || null,
+        notes || null,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/subcontracts/:id/milestones/:milestoneId",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { status, completedDate, paymentDate, paymentReference, notes } =
+      req.body;
+    const { rows } = await q(
+      `UPDATE subcontract_milestones SET
+      status = COALESCE($1, status),
+      completed_date = COALESCE($2, completed_date),
+      payment_date = COALESCE($3, payment_date),
+      payment_reference = COALESCE($4, payment_reference),
+      notes = COALESCE($5, notes),
+      updated_at = NOW()
+     WHERE id = $6 AND subcontract_id = $7 RETURNING *`,
+      [
+        status,
+        completedDate || null,
+        paymentDate || null,
+        paymentReference || null,
+        notes || null,
+        req.params.milestoneId,
+        req.params.id,
+      ],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/subcontracts/:id/milestones/:milestoneId",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q(
+      "DELETE FROM subcontract_milestones WHERE id=$1 AND subcontract_id=$2",
+      [req.params.milestoneId, req.params.id],
+    );
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+router.get(
+  "/subcontracts/:id/payments",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT sp.*, m.title AS milestone_title, u.first_name, u.last_name
+     FROM subcontract_payments sp
+     LEFT JOIN subcontract_milestones m ON m.id = sp.milestone_id
+     LEFT JOIN users u ON u.id = sp.recorded_by_id
+     WHERE sp.subcontract_id = $1
+     ORDER BY sp.payment_date DESC`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/subcontracts/:id/payments",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      amount,
+      paymentDate,
+      paymentMethod,
+      reference,
+      milestoneId,
+      notes,
+    } = req.body;
+    if (!amount)
+      return res
+        .status(400)
+        .json({ success: false, message: "amount required" });
+
+    const payment = await q(
+      `INSERT INTO subcontract_payments
+     (subcontract_id, milestone_id, amount, payment_date, payment_method, reference, notes, recorded_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        req.params.id,
+        milestoneId || null,
+        amount,
+        paymentDate || new Date(),
+        paymentMethod || "BANK_TRANSFER",
+        reference || null,
+        notes || null,
+        req.user.userId,
+      ],
+    );
+
+    // Update subcontract amount_paid
+    await q(
+      `UPDATE subcontracts SET 
+      amount_paid = (SELECT COALESCE(SUM(amount), 0) FROM subcontract_payments WHERE subcontract_id = $1),
+      updated_at = NOW()
+     WHERE id = $1`,
+      [req.params.id],
+    );
+
+    // Update milestone status if linked
+    if (milestoneId) {
+      await q(
+        `UPDATE subcontract_milestones SET 
+        status = 'PAID', payment_date = $1, payment_reference = $2, updated_at = NOW()
+       WHERE id = $3`,
+        [paymentDate || new Date(), reference || null, milestoneId],
+      );
+    }
+
+    res.status(201).json({ success: true, data: payment.rows[0] });
+  }),
+);
+
+router.patch(
+  "/subcontracts/:id/release-retention",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `UPDATE subcontracts SET
+      retention_released = TRUE,
+      retention_released_at = NOW(),
+      amount_paid = amount_paid + retention_amount,
+      updated_at = NOW()
+     WHERE id = $1 RETURNING *`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── SMS ───────────────────────────────────────────────────────
+router.post(
+  "/sms/send",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { sendSMS, smsTemplates } = require("../services/sms.service");
+    const { to, message, template, templateData } = req.body;
+
+    if (!to)
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number required" });
+
+    let smsMessage = message;
+    if (template && smsTemplates[template]) {
+      smsMessage = smsTemplates[template](...(templateData || []));
+    }
+
+    if (!smsMessage)
+      return res
+        .status(400)
+        .json({ success: false, message: "Message required" });
+
+    const sent = await sendSMS(to, smsMessage);
+    res.json({ success: sent, message: sent ? "SMS sent" : "SMS failed" });
+  }),
+);
+
+router.post(
+  "/sms/bulk",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  asyncHandler(async (req, res) => {
+    const { sendBulkSMS } = require("../services/sms.service");
+    const { recipients, message } = req.body;
+    if (!recipients?.length || !message) {
+      return res
+        .status(400)
+        .json({ success: false, message: "recipients and message required" });
+    }
+    const sent = await sendBulkSMS(recipients, message);
+    res.json({ success: true, data: { sent, total: recipients.length } });
+  }),
+);
+
+// ── CLIENT PORTAL ─────────────────────────────────────────────
+const crypto = require("crypto");
+
+router.get(
+  "/client-portal",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT cp.*, p.name AS project_name, p.status AS project_status,
+      u.first_name, u.last_name
+     FROM client_portals cp
+     JOIN projects p ON p.id = cp.project_id
+     JOIN users u ON u.id = cp.created_by_id
+     WHERE cp.company_id = $1
+     ORDER BY cp.created_at DESC`,
+      [req.user.companyId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/client-portal",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      clientName,
+      clientEmail,
+      expiresAt,
+      showBudget,
+      showExpenses,
+      showMaterials,
+      showVisitors,
+      showPhotos,
+    } = req.body;
+    if (!projectId)
+      return res
+        .status(400)
+        .json({ success: false, message: "projectId required" });
+    const token = crypto.randomBytes(32).toString("hex");
+    const { rows } = await q(
+      `INSERT INTO client_portals
+     (project_id, company_id, token, client_name, client_email, expires_at,
+      show_budget, show_expenses, show_materials, show_visitors, show_photos, created_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        projectId,
+        req.user.companyId,
+        token,
+        clientName || null,
+        clientEmail || null,
+        expiresAt || null,
+        showBudget !== false,
+        showExpenses || false,
+        showMaterials !== false,
+        showVisitors || false,
+        showPhotos !== false,
+        req.user.userId,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/client-portal/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      isActive,
+      showBudget,
+      showExpenses,
+      showMaterials,
+      showVisitors,
+      showPhotos,
+      expiresAt,
+    } = req.body;
+    const { rows } = await q(
+      `UPDATE client_portals SET
+      is_active = COALESCE($1, is_active),
+      show_budget = COALESCE($2, show_budget),
+      show_expenses = COALESCE($3, show_expenses),
+      show_materials = COALESCE($4, show_materials),
+      show_visitors = COALESCE($5, show_visitors),
+      show_photos = COALESCE($6, show_photos),
+      expires_at = COALESCE($7, expires_at),
+      updated_at = NOW()
+     WHERE id = $8 AND company_id = $9 RETURNING *`,
+      [
+        isActive,
+        showBudget,
+        showExpenses,
+        showMaterials,
+        showVisitors,
+        showPhotos,
+        expiresAt || null,
+        req.params.id,
+        req.user.companyId,
+      ],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/client-portal/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM client_portals WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// Serve HTML portal page
+router.get("/portal/:token", (req, res) => {
+  const path = require("path");
+  res.sendFile(path.join(__dirname, "../views/clientPortal.html"));
+});
+// Public endpoint — no auth needed
+router.get(
+  "/client-portal/view/:token",
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT cp.*, p.name AS project_name, p.type, p.status AS project_status,
+      p.location, p.start_date, p.end_date, p.description,
+      p.client_name, p.client_email, p.total_budget,
+      c.name AS company_name, c.logo_url AS company_logo
+     FROM client_portals cp
+     JOIN projects p ON p.id = cp.project_id
+     JOIN companies c ON c.id = cp.company_id
+     WHERE cp.token = $1 AND cp.is_active = TRUE`,
+      [req.params.token],
+    );
+
+    if (!rows[0])
+      return res
+        .status(404)
+        .json({ success: false, message: "Portal not found or expired" });
+
+    const portal = rows[0];
+
+    // Check expiry
+    if (portal.expires_at && new Date(portal.expires_at) < new Date()) {
+      return res
+        .status(403)
+        .json({ success: false, message: "This portal link has expired" });
+    }
+
+    // Update access count
+    await q(
+      "UPDATE client_portals SET access_count = access_count + 1, last_accessed_at = NOW() WHERE token = $1",
+      [req.params.token],
+    );
+
+    // Fetch project data based on permissions
+    const data = { portal, project: portal };
+
+    if (portal.show_budget) {
+      const { rows: budget } = await q(
+        `SELECT category, allocated, spent,
+        ROUND((spent/NULLIF(allocated,0))*100)::int AS percent_used
+       FROM budgets WHERE project_id = $1`,
+        [portal.project_id],
+      );
+      const totalAllocated = budget.reduce(
+        (s, b) => s + Number(b.allocated),
+        0,
+      );
+      const totalSpent = budget.reduce((s, b) => s + Number(b.spent), 0);
+      data.budget = {
+        categories: budget,
+        totalAllocated,
+        totalSpent,
+        percentUsed: totalAllocated
+          ? Math.round((totalSpent / totalAllocated) * 100)
+          : 0,
+      };
+    }
+
+    if (portal.show_materials) {
+      const { rows: materials } = await q(
+        `SELECT name, category, quantity, unit, status
+       FROM materials WHERE company_id = (SELECT company_id FROM projects WHERE id = $1)
+       ORDER BY status DESC, name LIMIT 20`,
+        [portal.project_id],
+      );
+      data.materials = materials;
+    }
+
+    if (portal.show_expenses) {
+      const { rows: expenses } = await q(
+        `SELECT category, description, amount, status, expense_date
+       FROM expenses WHERE project_id = $1 AND status = 'APPROVED'
+       ORDER BY expense_date DESC LIMIT 10`,
+        [portal.project_id],
+      );
+      data.expenses = expenses;
+    }
+
+    if (portal.show_photos) {
+      const { rows: photos } = await q(
+        `SELECT pp.title, pp.photo_url, pp.taken_at, pp.category, pp.is_milestone, pp.location
+     FROM progress_photos pp
+     WHERE pp.project_id = $1
+     ORDER BY pp.taken_at DESC
+     LIMIT 12`,
+        [portal.project_id],
+      );
+      data.photos = photos;
+    }
+
+    res.json({ success: true, data });
+  }),
+);
+
+// ── PROGRESS PHOTOS ───────────────────────────────────────────
+router.get(
+  "/progress-photos",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, category, limit = 50 } = req.query;
+    const conds = ["pp.company_id = $1"];
+    const params = [req.user.companyId];
+    let i = 2;
+    if (projectId) {
+      conds.push(`pp.project_id = $${i++}`);
+      params.push(projectId);
+    }
+    if (category) {
+      conds.push(`pp.category = $${i++}`);
+      params.push(category);
+    }
+    params.push(Number(limit));
+    const { rows } = await q(
+      `SELECT pp.*, u.first_name, u.last_name, p.name AS project_name
+     FROM progress_photos pp
+     LEFT JOIN users u ON u.id = pp.taken_by_id
+     LEFT JOIN projects p ON p.id = pp.project_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY pp.taken_at DESC
+     LIMIT $${i}`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/progress-photos",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      title,
+      description,
+      photoUrl,
+      location,
+      takenAt,
+      category,
+      isMilestone,
+    } = req.body;
+    if (!projectId || !photoUrl || !title) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId, title and photoUrl required",
+      });
+    }
+    const { rows } = await q(
+      `INSERT INTO progress_photos
+     (project_id, company_id, title, description, photo_url,
+      location, taken_at, taken_by_id, category, is_milestone)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        projectId,
+        req.user.companyId,
+        title,
+        description || null,
+        photoUrl,
+        location || null,
+        takenAt || new Date(),
+        req.user.userId,
+        category || "GENERAL",
+        isMilestone || false,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/progress-photos/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM progress_photos WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+router.get(
+  "/progress-photos/timeline",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId } = req.query;
+    const conds = ["pp.company_id = $1"];
+    const params = [req.user.companyId];
+    if (projectId) {
+      conds.push("pp.project_id = $2");
+      params.push(projectId);
+    }
+    const { rows } = await q(
+      `SELECT 
+      TO_CHAR(pp.taken_at, 'YYYY-MM') AS month,
+      TO_CHAR(pp.taken_at, 'Month YYYY') AS month_label,
+      COUNT(*)::int AS photo_count,
+      JSON_AGG(
+        JSON_BUILD_OBJECT(
+          'id', pp.id,
+          'title', pp.title,
+          'photoUrl', pp.photo_url,
+          'takenAt', pp.taken_at,
+          'category', pp.category,
+          'isMilestone', pp.is_milestone,
+          'location', pp.location,
+          'description', pp.description
+        ) ORDER BY pp.taken_at DESC
+      ) AS photos
+     FROM progress_photos pp
+     WHERE ${conds.join(" AND ")}
+     GROUP BY TO_CHAR(pp.taken_at, 'YYYY-MM'), TO_CHAR(pp.taken_at, 'Month YYYY')
+     ORDER BY month DESC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+// ── KIOSK ─────────────────────────────────────────────────────
+router.post(
+  "/kiosk/checkin",
+  asyncHandler(async (req, res) => {
+    const { employeeId, projectId, pin, latitude, longitude } = req.body;
+    if (!employeeId || !pin || !projectId) {
+      return res.status(400).json({
+        success: false,
+        message: "employeeId, projectId and pin required",
+      });
+    }
+
+    // Verify PIN
+    const { rows: empRows } = await q(
+      "SELECT * FROM employees WHERE id=$1 AND kiosk_pin=$2 AND kiosk_enabled=TRUE",
+      [employeeId, pin],
+    );
+    if (!empRows[0])
+      return res.status(401).json({ success: false, message: "Invalid PIN" });
+
+    // GPS validation
+    if (latitude && longitude) {
+      const { rows: projRows } = await q(
+        "SELECT site_latitude, site_longitude, site_radius, name FROM projects WHERE id=$1",
+        [projectId],
+      );
+      const project = projRows[0];
+      if (project?.site_latitude && project?.site_longitude) {
+        const R = 6371000; // Earth radius in metres
+        const lat1 = (parseFloat(project.site_latitude) * Math.PI) / 180;
+        const lat2 = (latitude * Math.PI) / 180;
+        const dLat =
+          ((latitude - parseFloat(project.site_latitude)) * Math.PI) / 180;
+        const dLon =
+          ((longitude - parseFloat(project.site_longitude)) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+        const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const radius = project.site_radius || 500;
+        if (distance > radius) {
+          return res.status(403).json({
+            success: false,
+            message: `You are ${Math.round(distance)}m from site. Must be within ${radius}m to check in.`,
+            distance: Math.round(distance),
+          });
+        }
+      }
+    }
+
+    // Check if already checked in today
+    const { rows: existing } = await q(
+      "SELECT * FROM attendances WHERE employee_id=$1 AND DATE(check_in)=CURRENT_DATE",
+      [employeeId],
+    );
+    if (existing[0] && !existing[0].check_out) {
+      return res.status(400).json({
+        success: false,
+        message: "Already checked in today",
+        data: existing[0],
+      });
+    }
+
+    // Create attendance record
+    const { rows } = await q(
+      `INSERT INTO attendances (employee_id, project_id, check_in, latitude, longitude, status)
+     VALUES ($1,$2,NOW(),$3,$4,'PRESENT') RETURNING *`,
+      [employeeId, projectId, latitude || null, longitude || null],
+    );
+
+    await q("UPDATE employees SET last_checkin_at=NOW() WHERE id=$1", [
+      employeeId,
+    ]);
+    res.json({
+      success: true,
+      message: `Welcome ${empRows[0].first_name}!`,
+      data: rows[0],
+    });
+  }),
+);
+
+router.get(
+  "/kiosk/employees/:projectId",
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT e.id, e.first_name, e.last_name, e.role, e.department,
+      e.kiosk_pin IS NOT NULL AS has_pin,
+      e.kiosk_enabled,
+      e.last_checkin_at,
+      e.last_checkout_at,
+      (SELECT status FROM attendances a WHERE a.employee_id = e.id 
+       AND DATE(a.check_in) = CURRENT_DATE LIMIT 1) AS today_status,
+      (SELECT id FROM attendances a WHERE a.employee_id = e.id 
+       AND DATE(a.check_in) = CURRENT_DATE LIMIT 1) AS today_attendance_id
+     FROM employees e
+     WHERE e.company_id = (SELECT company_id FROM projects WHERE id = $1)
+     AND e.status = 'ACTIVE'
+     AND e.kiosk_enabled = TRUE
+     ORDER BY e.first_name`,
+      [req.params.projectId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/kiosk/set-pin",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { employeeId, pin } = req.body;
+    if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "PIN must be exactly 4 digits" });
+    }
+    const { rows } = await q(
+      "UPDATE employees SET kiosk_pin=$1, kiosk_enabled=TRUE, updated_at=NOW() WHERE id=$2 AND company_id=$3 RETURNING id, first_name, last_name, kiosk_enabled",
+      [pin, employeeId, req.user.companyId],
+    );
+    if (!rows[0]) throw new Error("Employee not found");
+    res.json({ success: true, data: rows[0], message: "PIN set successfully" });
+  }),
+);
+
+router.post(
+  "/kiosk/checkout",
+  asyncHandler(async (req, res) => {
+    const { employeeId, pin, attendanceId } = req.body;
+    if (!employeeId || !pin) {
+      return res
+        .status(400)
+        .json({ success: false, message: "employeeId and pin required" });
+    }
+    // Verify PIN
+    const { rows: empRows } = await q(
+      "SELECT * FROM employees WHERE id=$1 AND kiosk_pin=$2 AND kiosk_enabled=TRUE",
+      [employeeId, pin],
+    );
+    if (!empRows[0])
+      return res.status(401).json({ success: false, message: "Invalid PIN" });
+
+    // Find today's attendance
+    const { rows: attRows } = await q(
+      "SELECT * FROM attendances WHERE employee_id=$1 AND DATE(check_in)=CURRENT_DATE AND check_out IS NULL",
+      [employeeId],
+    );
+    if (!attRows[0])
+      return res
+        .status(400)
+        .json({ success: false, message: "No check-in found for today" });
+
+    // Calculate hours worked
+    const checkIn = new Date(attRows[0].check_in);
+    const checkOut = new Date();
+    const hoursWorked = (
+      (checkOut.getTime() - checkIn.getTime()) /
+      (1000 * 60 * 60)
+    ).toFixed(2);
+
+    const { rows } = await q(
+      "UPDATE attendances SET check_out=NOW(), hours_worked=$1, updated_at=NOW() WHERE id=$2 RETURNING *",
+      [hoursWorked, attRows[0].id],
+    );
+
+    // Update employee last checkout
+    await q("UPDATE employees SET last_checkout_at=NOW() WHERE id=$1", [
+      employeeId,
+    ]);
+
+    // Auto-create/update timesheet entry
+    try {
+      const dayOfWeek = new Date().getDay(); // 0=Sun, 1=Mon...
+      const dayColumns = [
+        "sun_hours",
+        "mon_hours",
+        "tue_hours",
+        "wed_hours",
+        "thu_hours",
+        "fri_hours",
+        "sat_hours",
+      ];
+      const dayCol = dayColumns[dayOfWeek];
+
+      // Get week start (Monday)
+      const today = new Date();
+      const monday = new Date(today);
+      monday.setDate(
+        today.getDate() - (today.getDay() === 0 ? 6 : today.getDay() - 1),
+      );
+      const weekStart = monday.toISOString().split("T")[0];
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const weekEnd = sunday.toISOString().split("T")[0];
+
+      await q(
+        `INSERT INTO timesheets 
+     (company_id, project_id, employee_id, week_start, week_end, ${dayCol}, daily_rate, status)
+     VALUES (
+       (SELECT company_id FROM employees WHERE id=$1),
+       $2, $1, $3, $4, $5,
+       (SELECT daily_rate FROM employees WHERE id=$1),
+       'DRAFT'
+     )
+     ON CONFLICT (employee_id, week_start, project_id)
+     DO UPDATE SET ${dayCol} = EXCLUDED.${dayCol}, updated_at=NOW()`,
+        [
+          employeeId,
+          attRows[0].project_id,
+          weekStart,
+          weekEnd,
+          parseFloat(hoursWorked),
+        ],
+      );
+    } catch (e) {
+      console.warn("Auto-timesheet update failed:", e.message);
+    }
+
+    res.json({
+      success: true,
+      message: `Goodbye ${empRows[0].first_name}! ${hoursWorked} hours logged.`,
+      data: rows[0],
+    });
+  }),
+);
+
+router.get(
+  "/kiosk/today/:projectId",
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `SELECT a.*, e.first_name, e.last_name, e.role
+     FROM attendances a
+     JOIN employees e ON e.id = a.employee_id
+     WHERE a.project_id = $1
+     AND DATE(a.check_in) = CURRENT_DATE
+     ORDER BY a.check_in DESC`,
+      [req.params.projectId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+// ── INVOICES ──────────────────────────────────────────────────
+router.get(
+  "/invoices",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, status } = req.query;
+    const conds = ["i.company_id = $1"];
+    const params = [req.user.companyId];
+    let idx = 2;
+    if (projectId) {
+      conds.push(`i.project_id = $${idx++}`);
+      params.push(projectId);
+    }
+    if (status) {
+      conds.push(`i.status = $${idx++}`);
+      params.push(status);
+    }
+    const { rows } = await q(
+      `SELECT i.*, p.name AS project_name,
+      (SELECT json_agg(ii.*) FROM invoice_items ii WHERE ii.invoice_id = i.id) AS items
+     FROM invoices i
+     LEFT JOIN projects p ON p.id = i.project_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY i.created_at DESC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/invoices",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      clientName,
+      clientEmail,
+      clientPhone,
+      clientAddress,
+      issueDate,
+      dueDate,
+      taxRate,
+      discount,
+      notes,
+      paymentTerms,
+      items,
+    } = req.body;
+    if (!projectId || !clientName || !items?.length) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId, clientName and items required",
+      });
+    }
+
+    // Generate invoice number
+    const { rows: countRows } = await q(
+      "SELECT COUNT(*) FROM invoices WHERE company_id=$1",
+      [req.user.companyId],
+    );
+    const count = parseInt(countRows[0].count) + 1;
+    const invoiceNumber = `INV-${String(count).padStart(4, "0")}`;
+
+    // Calculate totals
+    const subtotal = items.reduce(
+      (s, it) => s + Number(it.quantity) * Number(it.unitPrice),
+      0,
+    );
+    const taxAmount = subtotal * (Number(taxRate || 7.5) / 100);
+    const total = subtotal + taxAmount - Number(discount || 0);
+
+    const { rows } = await q(
+      `INSERT INTO invoices
+     (company_id, project_id, invoice_number, client_name, client_email,
+      client_phone, client_address, issue_date, due_date, status,
+      subtotal, tax_rate, tax_amount, discount, total, notes,
+      payment_terms, created_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'DRAFT',$10,$11,$12,$13,$14,$15,$16,$17)
+     RETURNING *`,
+      [
+        req.user.companyId,
+        projectId,
+        invoiceNumber,
+        clientName,
+        clientEmail || null,
+        clientPhone || null,
+        clientAddress || null,
+        issueDate || new Date(),
+        dueDate || null,
+        subtotal,
+        taxRate || 7.5,
+        taxAmount,
+        discount || 0,
+        total,
+        notes || null,
+        paymentTerms || "Payment due within 30 days",
+        req.user.userId,
+      ],
+    );
+
+    const invoice = rows[0];
+
+    // Insert items
+    for (const item of items) {
+      await q(
+        `INSERT INTO invoice_items (invoice_id, description, quantity, unit, unit_price, total)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          invoice.id,
+          item.description,
+          item.quantity,
+          item.unit || "item",
+          item.unitPrice,
+          Number(item.quantity) * Number(item.unitPrice),
+        ],
+      );
+    }
+
+    // Fetch complete invoice with items
+    const { rows: full } = await q(
+      `SELECT i.*, p.name AS project_name,
+      (SELECT json_agg(ii.*) FROM invoice_items ii WHERE ii.invoice_id = i.id) AS items
+     FROM invoices i
+     LEFT JOIN projects p ON p.id = i.project_id
+     WHERE i.id = $1`,
+      [invoice.id],
+    );
+
+    res.status(201).json({ success: true, data: full[0] });
+  }),
+);
+
+router.patch(
+  "/invoices/:id/status",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { status, paidAmount } = req.body;
+    const validStatuses = ["DRAFT", "SENT", "PAID", "OVERDUE", "CANCELLED"];
+    if (!validStatuses.includes(status)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid status" });
+    }
+
+    const isPaid = status === "PAID";
+    const { rows } = await q(
+      `UPDATE invoices SET
+      status = $1,
+      paid_at = CASE WHEN $2 THEN NOW() ELSE paid_at END,
+      paid_amount = CASE WHEN $2 THEN $3 ELSE paid_amount END,
+      updated_at = NOW()
+     WHERE id = $4 AND company_id = $5 RETURNING *`,
+      [status, isPaid, paidAmount || null, req.params.id, req.user.companyId],
+    );
+    if (!rows[0]) throw new Error("Invoice not found");
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/invoices/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q(
+      "DELETE FROM invoices WHERE id=$1 AND company_id=$2 AND status='DRAFT'",
+      [req.params.id, req.user.companyId],
+    );
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// ── DEFECTS & SNAG LIST ───────────────────────────────────────
+router.get(
+  "/defects",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, status, priority, category } = req.query;
+    const conds = ["d.company_id = $1"];
+    const params = [req.user.companyId];
+    let idx = 2;
+    if (projectId) {
+      conds.push(`d.project_id = $${idx++}`);
+      params.push(projectId);
+    }
+    if (status) {
+      conds.push(`d.status = $${idx++}`);
+      params.push(status);
+    }
+    if (priority) {
+      conds.push(`d.priority = $${idx++}`);
+      params.push(priority);
+    }
+    if (category) {
+      conds.push(`d.category = $${idx++}`);
+      params.push(category);
+    }
+    const { rows } = await q(
+      `SELECT d.*, u.first_name, u.last_name, p.name AS project_name
+     FROM defects d
+     LEFT JOIN users u ON u.id = d.raised_by_id
+     LEFT JOIN projects p ON p.id = d.project_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY 
+       CASE d.priority WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+       d.created_at DESC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/defects",
+  protect,
+  asyncHandler(async (req, res) => {
+    const {
+      projectId,
+      title,
+      description,
+      location,
+      category,
+      priority,
+      photos,
+      assignedTo,
+      dueDate,
+    } = req.body;
+    if (!projectId || !title) {
+      return res
+        .status(400)
+        .json({ success: false, message: "projectId and title required" });
+    }
+    const { rows } = await q(
+      `INSERT INTO defects
+     (company_id, project_id, title, description, location, category,
+      priority, photos, assigned_to, due_date, raised_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [
+        req.user.companyId,
+        projectId,
+        title,
+        description || null,
+        location || null,
+        category || "GENERAL",
+        priority || "MEDIUM",
+        JSON.stringify(photos || []),
+        assignedTo || null,
+        dueDate || null,
+        req.user.userId,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.patch(
+  "/defects/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { status, resolutionNotes, resolutionPhotos, assignedTo, priority } =
+      req.body;
+    const { rows } = await q(
+      `UPDATE defects SET
+      status = COALESCE($1, status),
+      resolution_notes = COALESCE($2, resolution_notes),
+      resolution_photos = COALESCE($3, resolution_photos),
+      assigned_to = COALESCE($4, assigned_to),
+      priority = COALESCE($5, priority),
+      resolved_at = CASE WHEN $1 = 'RESOLVED' THEN NOW() ELSE resolved_at END,
+      updated_at = NOW()
+     WHERE id = $6 AND company_id = $7 RETURNING *`,
+      [
+        status || null,
+        resolutionNotes || null,
+        resolutionPhotos ? JSON.stringify(resolutionPhotos) : null,
+        assignedTo || null,
+        priority || null,
+        req.params.id,
+        req.user.companyId,
+      ],
+    );
+    if (!rows[0]) throw new Error("Defect not found");
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/defects/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q("DELETE FROM defects WHERE id=$1 AND company_id=$2", [
+      req.params.id,
+      req.user.companyId,
+    ]);
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// ── MATERIAL REQUESTS ─────────────────────────────────────────
+router.get(
+  "/material-requests",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, status } = req.query;
+    const conds = ["mr.company_id = $1"];
+    const params = [req.user.companyId];
+    let idx = 2;
+    if (projectId) {
+      conds.push(`mr.project_id = $${idx++}`);
+      params.push(projectId);
+    }
+    if (status) {
+      conds.push(`mr.status = $${idx++}`);
+      params.push(status);
+    }
+    const { rows } = await q(
+      `SELECT mr.*,
+      u.first_name, u.last_name,
+      ab.first_name AS approved_first, ab.last_name AS approved_last,
+      p.name AS project_name,
+      (SELECT json_agg(mri.* ORDER BY mri.created_at) FROM material_request_items mri WHERE mri.request_id = mr.id) AS items
+     FROM material_requests mr
+     LEFT JOIN users u ON u.id = mr.requested_by_id
+     LEFT JOIN users ab ON ab.id = mr.approved_by_id
+     LEFT JOIN projects p ON p.id = mr.project_id
+     WHERE ${conds.join(" AND ")}
+     ORDER BY mr.created_at DESC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/material-requests",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { projectId, title, priority, neededBy, notes, items } = req.body;
+    if (!projectId || !title || !items?.length) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId, title and items required",
+      });
+    }
+
+    // Generate request number
+    const { rows: countRows } = await q(
+      "SELECT COUNT(*) FROM material_requests WHERE company_id=$1",
+      [req.user.companyId],
+    );
+    const count = parseInt(countRows[0].count) + 1;
+    const requestNumber = `MRQ-${String(count).padStart(4, "0")}`;
+
+    const { rows } = await q(
+      `INSERT INTO material_requests
+     (company_id, project_id, request_number, title, priority, needed_by, notes, requested_by_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        req.user.companyId,
+        projectId,
+        requestNumber,
+        title,
+        priority || "NORMAL",
+        neededBy || null,
+        notes || null,
+        req.user.userId,
+      ],
+    );
+
+    const request = rows[0];
+
+    // Insert items
+    for (const item of items) {
+      const total = Number(item.quantity) * Number(item.unitPrice || 0);
+      await q(
+        `INSERT INTO material_request_items
+       (request_id, material_name, quantity, unit, unit_price, total, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          request.id,
+          item.materialName,
+          item.quantity,
+          item.unit || "units",
+          item.unitPrice || 0,
+          total,
+          item.notes || null,
+        ],
+      );
+    }
+
+    // Fetch complete request with items
+    const { rows: full } = await q(
+      `SELECT mr.*,
+      u.first_name, u.last_name, p.name AS project_name,
+      (SELECT json_agg(mri.*) FROM material_request_items mri WHERE mri.request_id = mr.id) AS items
+     FROM material_requests mr
+     LEFT JOIN users u ON u.id = mr.requested_by_id
+     LEFT JOIN projects p ON p.id = mr.project_id
+     WHERE mr.id = $1`,
+      [request.id],
+    );
+
+    res.status(201).json({ success: true, data: full[0] });
+  }),
+);
+
+router.patch(
+  "/material-requests/:id/approve",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SITE_MANAGER"),
+  asyncHandler(async (req, res) => {
+    const { rows } = await q(
+      `UPDATE material_requests SET
+      status = 'APPROVED',
+      approved_by_id = $1,
+      approved_at = NOW(),
+      updated_at = NOW()
+     WHERE id = $2 AND company_id = $3 RETURNING *`,
+      [req.user.userId, req.params.id, req.user.companyId],
+    );
+    if (!rows[0]) throw new Error("Request not found");
+
+    // Auto-create purchase order if supplier known
+    try {
+      const { rows: items } = await q(
+        "SELECT * FROM material_request_items WHERE request_id = $1",
+        [req.params.id],
+      );
+      const { rows: countRows } = await q(
+        "SELECT COUNT(*) FROM purchase_orders WHERE company_id=$1",
+        [req.user.companyId],
+      );
+      const count = parseInt(countRows[0].count) + 1;
+      const poNumber = `PO-${String(count).padStart(4, "0")}`;
+      const total = items.reduce((s, it) => s + Number(it.total), 0);
+
+      const { rows: poRows } = await q(
+        `INSERT INTO purchase_orders
+       (company_id, project_id, po_number, total_amount, status, notes)
+       VALUES ($1,$2,$3,$4,'DRAFT',$5) RETURNING *`,
+        [
+          req.user.companyId,
+          rows[0].project_id,
+          poNumber,
+          total,
+          `Auto-created from ${rows[0].request_number}`,
+        ],
+      );
+
+      for (const item of items) {
+        await q(
+          `INSERT INTO purchase_order_items
+         (po_id, description, quantity, unit, unit_price, total_price)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+          [
+            poRows[0].id,
+            item.material_name,
+            item.quantity,
+            item.unit,
+            item.unit_price,
+            item.total,
+          ],
+        );
+      }
+
+      await q(
+        "UPDATE material_requests SET status='ORDERED', updated_at=NOW() WHERE id=$1",
+        [req.params.id],
+      );
+    } catch (e) {
+      console.warn("Auto PO creation failed:", e);
+    }
+
+    res.json({ success: true, data: rows[0], message: "Request approved" });
+  }),
+);
+
+router.patch(
+  "/material-requests/:id/reject",
+  protect,
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SITE_MANAGER"),
+  asyncHandler(async (req, res) => {
+    const { reason } = req.body;
+    const { rows } = await q(
+      `UPDATE material_requests SET
+      status = 'REJECTED',
+      rejection_reason = $1,
+      updated_at = NOW()
+     WHERE id = $2 AND company_id = $3 RETURNING *`,
+      [reason || "No reason provided", req.params.id, req.user.companyId],
+    );
+    if (!rows[0]) throw new Error("Request not found");
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/material-requests/:id",
+  protect,
+  asyncHandler(async (req, res) => {
+    await q(
+      "DELETE FROM material_requests WHERE id=$1 AND company_id=$2 AND status='PENDING'",
+      [req.params.id, req.user.companyId],
+    );
+    res.json({ success: true, message: "Deleted" });
+  }),
+);
+
+// ── WEEKLY REPORT ─────────────────────────────────────────────
+router.get(
+  "/reports/weekly",
+  protect,
+  asyncHandler(async (req, res) => {
+    console.log("Generating report for company:", req.user.companyId);
+    const {
+      generateWeeklyReport,
+      formatWhatsAppReport,
+    } = require("../services/weeklyReport.service");
+    const data = await generateWeeklyReport(req.user.companyId);
+    console.log("Report data:", data);
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "No active projects found" });
+    const message = formatWhatsAppReport(data);
+    res.json({ success: true, data: { message, raw: data } });
+  }),
+);
+
+// ── AI COST ESTIMATOR ─────────────────────────────────────────
+router.post(
+  "/ai/estimate",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { buildingType, size, location, quality, floors, description } =
+      req.body;
+    if (!buildingType || !size) {
+      return res
+        .status(400)
+        .json({ success: false, message: "buildingType and size required" });
+    }
+
+    const Anthropic = require("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const prompt = `You are an expert Nigerian quantity surveyor and construction cost estimator with 20+ years experience in Lagos, Abuja, Port Harcourt and other Nigerian cities.
+
+A client wants to estimate the cost of a construction project with these details:
+- Building Type: ${buildingType}
+- Total Floor Area: ${size} sqm
+- Number of Floors: ${floors || 1}
+- Location: ${location || "Lagos, Nigeria"}
+- Quality Level: ${quality || "Standard"}
+- Additional Details: ${description || "None"}
+
+Provide a detailed construction cost estimate in Nigerian Naira (NGN) for ${new Date().getFullYear()}.
+
+Respond ONLY with a valid JSON object in this exact format:
+{
+  "summary": {
+    "totalCost": 150000000,
+    "costPerSqm": 750000,
+    "buildingType": "3 Bedroom Bungalow",
+    "size": 200,
+    "location": "Lagos",
+    "quality": "Standard",
+    "estimatedDuration": "8-12 months",
+    "confidence": "Medium"
+  },
+  "breakdown": [
+    {
+      "category": "Preliminaries & Site Setup",
+      "percentage": 5,
+      "amount": 7500000,
+      "details": "Site clearing, hoarding, mobilisation, temporary facilities"
+    },
+    {
+      "category": "Substructure (Foundation)",
+      "percentage": 15,
+      "amount": 22500000,
+      "details": "Excavation, concrete foundation, DPC, backfill"
+    },
+    {
+      "category": "Superstructure (Frame)",
+      "percentage": 20,
+      "amount": 30000000,
+      "details": "Columns, beams, slabs, walls, roofing"
+    },
+    {
+      "category": "Roofing",
+      "percentage": 8,
+      "amount": 12000000,
+      "details": "Roof structure, long span sheets, gutters"
+    },
+    {
+      "category": "Finishes",
+      "percentage": 20,
+      "amount": 30000000,
+      "details": "Plastering, tiling, painting, ceilings, doors, windows"
+    },
+    {
+      "category": "Mechanical & Plumbing",
+      "percentage": 10,
+      "amount": 15000000,
+      "details": "Water supply, drainage, sanitary fittings, overhead tank"
+    },
+    {
+      "category": "Electrical",
+      "percentage": 10,
+      "amount": 15000000,
+      "details": "Wiring, conduits, fittings, distribution board, lighting"
+    },
+    {
+      "category": "External Works",
+      "percentage": 7,
+      "amount": 10500000,
+      "details": "Fence, gate, compound paving, landscaping"
+    },
+    {
+      "category": "Contingency (5%)",
+      "percentage": 5,
+      "amount": 7500000,
+      "details": "Unforeseen works and price fluctuations"
+    }
+  ],
+  "assumptions": [
+    "Prices based on current Lagos market rates",
+    "Standard sand-crete block construction",
+    "Long span aluminum roofing sheets",
+    "Ceramic floor tiles throughout"
+  ],
+  "disclaimer": "This is an AI-generated estimate. Actual costs may vary based on site conditions, material price changes, and design specifications. Always obtain professional QS report."
+}
+
+Make sure all amounts are realistic for Nigerian construction in ${new Date().getFullYear()}. The percentages must add up to 100. All amounts must add up to totalCost.`;
+
+    const message = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 2000,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const responseText =
+      message.content[0].type === "text" ? message.content[0].text : "";
+
+    // Parse JSON from response
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res
+        .status(500)
+        .json({ success: false, message: "Could not parse AI response" });
+    }
+
+    const estimate = JSON.parse(jsonMatch[0]);
+    res.json({ success: true, data: estimate });
+  }),
+);
+
+module.exports = router;

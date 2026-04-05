@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Portal — Projex</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f6fa;
+        color: #2c3e50;
+      }
+      .header {
+        background: linear-gradient(135deg, #0a2342, #0d2b4e);
+        padding: 24px 20px;
+        border-bottom: 4px solid #ff6a00;
+      }
+      .header-inner {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .brand {
+        color: #ff6a00;
+        font-size: 20px;
+        font-weight: 800;
+        margin-bottom: 12px;
+      }
+      .brand span {
+        color: white;
+      }
+      .project-name {
+        color: white;
+        font-size: 24px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .company-name {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 14px;
+      }
+      .content {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+      .badge-green {
+        background: #d5f5e3;
+        color: #1e8449;
+      }
+      .badge-blue {
+        background: #ebf5fb;
+        color: #1a5276;
+      }
+      .badge-orange {
+        background: #fef5e7;
+        color: #e67e22;
+      }
+      .card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      .card-title {
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: #7f8c8d;
+        margin-bottom: 16px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .stat {
+        background: #f4f6fa;
+        border-radius: 8px;
+        padding: 14px;
+        text-align: center;
+      }
+      .stat-value {
+        font-size: 20px;
+        font-weight: 800;
+        color: #0a2342;
+      }
+      .stat-label {
+        font-size: 11px;
+        color: #7f8c8d;
+        margin-top: 4px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .progress-bar {
+        background: #e8ecf0;
+        border-radius: 4px;
+        height: 8px;
+        overflow: hidden;
+        margin: 8px 0;
+      }
+      .progress-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.3s;
+      }
+      .budget-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid #f4f6fa;
+      }
+      .budget-row:last-child {
+        border-bottom: none;
+      }
+      .budget-cat {
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .budget-amount {
+        font-size: 14px;
+        font-weight: 700;
+        color: #ff6a00;
+      }
+      .budget-pct {
+        font-size: 12px;
+        color: #7f8c8d;
+      }
+      .material-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid #f4f6fa;
+      }
+      .material-row:last-child {
+        border-bottom: none;
+      }
+      .status-ok {
+        color: #1e8449;
+        background: #d5f5e3;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .status-low {
+        color: #d4ac0d;
+        background: #fef9e7;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .status-critical {
+        color: #c0392b;
+        background: #fadbd8;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #f4f6fa;
+        font-size: 14px;
+      }
+      .info-row:last-child {
+        border-bottom: none;
+      }
+      .info-label {
+        color: #7f8c8d;
+      }
+      .info-value {
+        font-weight: 600;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #7f8c8d;
+        font-size: 12px;
+      }
+      .footer a {
+        color: #ff6a00;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .error {
+        text-align: center;
+        padding: 60px 20px;
+      }
+      .error h2 {
+        font-size: 24px;
+        margin-bottom: 8px;
+        color: #2c3e50;
+      }
+      .error p {
+        color: #7f8c8d;
+      }
+      .loading {
+        text-align: center;
+        padding: 60px 20px;
+      }
+      img {
+        max-width: 100%;
+        display: block;
+      }
+      @media (max-width: 600px) {
+        .stats {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="loading"><p>Loading project data...</p></div>
+    </div>
+
+    <script>
+      const token = window.location.pathname.split("/").pop();
+      const apiBase = window.location.origin + "/api/v1";
+
+      async function loadPortal() {
+        try {
+          const res = await fetch(`${apiBase}/client-portal/view/${token}`);
+          const json = await res.json();
+          console.log("Portal data:", JSON.stringify(json.data?.photos));
+          if (!json.success) {
+            document.getElementById("app").innerHTML = `
+            <div class="error">
+              <h2>🔒 Portal Unavailable</h2>
+              <p>${json.message || "This portal link is no longer active."}</p>
+            </div>`;
+            return;
+          }
+          renderPortal(json.data);
+        } catch (e) {
+          document.getElementById("app").innerHTML = `
+          <div class="error">
+            <h2>⚠️ Error</h2>
+            <p>Could not load project data. Please try again.</p>
+          </div>`;
+        }
+      }
+
+      function fmt(n) {
+        return "₦" + Number(n).toLocaleString("en-NG");
+      }
+
+      function fmtDate(d) {
+        if (!d) return "—";
+        return new Date(d).toLocaleDateString("en-NG", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
+      }
+
+      function renderPortal(data) {
+        const { portal, budget, materials, expenses } = data;
+        const pct = budget?.percentUsed || 0;
+        const gaugeColor =
+          pct > 90 ? "#C0392B" : pct > 75 ? "#E67E22" : "#27AE60";
+
+        let html = `
+        <div class="header">
+          <div class="header-inner">
+            <div class="brand">🏗️ Pro<span>jex</span></div>
+            <div class="project-name">${portal.project_name}</div>
+            <div class="company-name">${portal.company_name}</div>
+            <span class="badge badge-${portal.project_status === "ACTIVE" ? "green" : "blue"}">${portal.project_status || "ACTIVE"}</span>
+          </div>
+        </div>
+        <div class="content">`;
+
+        // Project info
+        html += `
+        <div class="card">
+          <div class="card-title">Project Information</div>
+          <div class="info-row"><span class="info-label">Type</span><span class="info-value">${portal.type || "—"}</span></div>
+          <div class="info-row"><span class="info-label">Location</span><span class="info-value">${portal.location || "—"}</span></div>
+          <div class="info-row"><span class="info-label">Start Date</span><span class="info-value">${fmtDate(portal.start_date)}</span></div>
+          <div class="info-row"><span class="info-label">End Date</span><span class="info-value">${fmtDate(portal.end_date)}</span></div>
+          ${portal.description ? `<div class="info-row"><span class="info-label">Description</span><span class="info-value">${portal.description}</span></div>` : ""}
+        </div>`;
+
+        // Budget
+        if (budget) {
+          html += `
+          <div class="card">
+            <div class="card-title">Budget Overview</div>
+            <div class="stats">
+              <div class="stat">
+                <div class="stat-value">${fmt(budget.totalAllocated)}</div>
+                <div class="stat-label">Total Budget</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" style="color:${gaugeColor}">${fmt(budget.totalSpent)}</div>
+                <div class="stat-label">Spent</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" style="color:#27AE60">${fmt(budget.totalAllocated - budget.totalSpent)}</div>
+                <div class="stat-label">Remaining</div>
+              </div>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width:${Math.min(pct, 100)}%;background:${gaugeColor}"></div>
+            </div>
+            <p style="text-align:right;font-size:12px;color:#7F8C8D;margin-bottom:16px">${pct}% used</p>
+            ${budget.categories
+              .map(
+                (b) => `
+              <div class="budget-row">
+                <div>
+                  <div class="budget-cat">${b.category}</div>
+                  <div class="budget-pct">${b.percent_used || 0}% of ${fmt(b.allocated)}</div>
+                </div>
+                <div class="budget-amount">${fmt(b.spent)}</div>
+              </div>`,
+              )
+              .join("")}
+          </div>`;
+        }
+
+        // Materials
+        if (materials && materials.length > 0) {
+          html += `
+          <div class="card">
+            <div class="card-title">Materials Status</div>
+            ${materials
+              .map(
+                (m) => `
+              <div class="material-row">
+                <div>
+                  <div style="font-weight:500;font-size:14px">${m.name}</div>
+                  <div style="font-size:12px;color:#7F8C8D">${m.quantity} ${m.unit} · ${m.category}</div>
+                </div>
+                <span class="status-${m.status === "OK" ? "ok" : m.status === "LOW" ? "low" : "critical"}">${m.status}</span>
+              </div>`,
+              )
+              .join("")}
+          </div>`;
+        }
+
+        // Expenses
+        if (expenses && expenses.length > 0) {
+          html += `
+          <div class="card">
+            <div class="card-title">Recent Approved Expenses</div>
+            ${expenses
+              .map(
+                (e) => `
+              <div class="budget-row">
+                <div>
+                  <div class="budget-cat">${e.description}</div>
+                  <div class="budget-pct">${e.category} · ${fmtDate(e.expense_date)}</div>
+                </div>
+                <div class="budget-amount">${fmt(e.amount)}</div>
+              </div>`,
+              )
+              .join("")}
+          </div>`;
+        }
+
+        // Photos
+        if (data.photos && data.photos.length > 0) {
+          html += `
+    <div class="card">
+      <div class="card-title">Progress Photos</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        ${data.photos
+          .map(
+            (p) => `
+          <div style="position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1">
+            <img src="${p.photo_url}" style="width:100%;height:100%;object-fit:cover" loading="lazy" />
+            ${p.is_milestone ? '<div style="position:absolute;top:4px;right:4px;background:#FF6A00;border-radius:10px;padding:2px 6px;font-size:10px;color:white;font-weight:700">★ Milestone</div>' : ""}
+            <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);padding:4px 6px">
+              <div style="font-size:10px;color:white;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.title}</div>
+              <div style="font-size:9px;color:rgba(255,255,255,0.7)">${fmtDate(p.taken_at)}</div>
+            </div>
+          </div>`,
+          )
+          .join("")}
+      </div>
+    </div>`;
+        }
+
+        html += `
+        </div>
+        <div class="footer">
+          Powered by <a href="https://projex.ng">Projex</a> · Smart Construction Management<br>
+          Last updated: ${new Date().toLocaleDateString("en-NG")}
+        </div>`;
+
+        document.getElementById("app").innerHTML = html;
+        document.title = `${portal.project_name} — ${portal.company_name}`;
+      }
+
+      loadPortal();
+    </script>
+  </body>
+</html>
