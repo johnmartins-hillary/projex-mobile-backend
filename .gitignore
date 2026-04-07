@@ -47,4 +47,11 @@ coverage/
 # Misc
 *.pem
 *.key
-*.cert
+*.cert.env.dev
+.env.stg
+.env.prod
+.env
+.env.dev
+.env.stg
+.env.prod
+.env
