@@ -363,6 +363,27 @@ exports.budgets = {
       req.user.companyId,
     );
     if (!project) throw new NotFoundError("Project");
+
+    // Check total allocations don't exceed project budget
+    if (project.total_budget && Number(project.total_budget) > 0) {
+      const { rows: existing } = await query(
+        "SELECT COALESCE(SUM(allocated), 0) AS total FROM budgets WHERE project_id=$1",
+        [req.body.projectId],
+      );
+      const currentTotal = parseFloat(existing[0].total);
+      const newTotal = currentTotal + Number(req.body.allocated);
+      if (newTotal > parseFloat(project.total_budget)) {
+        throw new AppError(
+          `Budget allocation exceeds project budget. ` +
+            `Project budget: ₦${parseFloat(project.total_budget).toLocaleString()}, ` +
+            `Already allocated: ₦${currentTotal.toLocaleString()}, ` +
+            `New allocation: ₦${Number(req.body.allocated).toLocaleString()}`,
+          400,
+          "BUDGET_EXCEEDED",
+        );
+      }
+    }
+
     const b = await budgetRepo.create(req.body);
     res.status(201).json({ success: true, data: b });
   }),
@@ -405,6 +426,29 @@ exports.expenses = {
     if (!existing[0]) throw new NotFoundError("Expense");
     if (existing[0].status !== "PENDING")
       throw new AppError("Only pending expenses can be approved", 400);
+
+    // Check budget before approving
+    if (existing[0].category && existing[0].project_id) {
+      const { rows: budgetRows } = await query(
+        "SELECT * FROM budgets WHERE project_id=$1 AND category=$2",
+        [existing[0].project_id, existing[0].category],
+      );
+      if (budgetRows[0]) {
+        const budget = budgetRows[0];
+        const newSpent =
+          parseFloat(budget.spent) + parseFloat(existing[0].amount);
+        const allocated = parseFloat(budget.allocated);
+        if (newSpent > allocated) {
+          throw new AppError(
+            `Approving this expense will exceed the ${existing[0].category} budget. ` +
+              `Budget: ₦${allocated.toLocaleString()}, Already spent: ₦${parseFloat(budget.spent).toLocaleString()}, ` +
+              `This expense: ₦${parseFloat(existing[0].amount).toLocaleString()}`,
+            400,
+            "BUDGET_EXCEEDED",
+          );
+        }
+      }
+    }
 
     const expense = await expenseRepo.approve(req.params.id, req.user.userId);
 
@@ -478,6 +522,10 @@ exports.visitors = {
     if (status) {
       conds.push(`v.status = $${i++}`);
       params.push(status);
+    }
+    if (date) {
+      conds.push(`DATE(v.time_in AT TIME ZONE 'Africa/Lagos') = $${i++}`);
+      params.push(date);
     }
     params.push(Number(limit));
     const { rows } = await query(
@@ -584,12 +632,12 @@ exports.users = {
       passwordHash: await bcrypt.hash(tempPass, 12),
     });
     // Send invite email
-    const template = emailTemplates.inviteTeamMember(
-      req.body.firstName || "Team Member",
-      req.user.companyName || "your company",
-      tempPass, 
-      req.body.role,
-    );
+   const template = emailTemplates.inviteTeamMember(
+     req.body.firstName || "Team Member",
+     company.name || "your company",
+     tempPass,
+     req.body.role,
+   );
     sendEmail({
       to: req.body.email,
       subject: template.subject,

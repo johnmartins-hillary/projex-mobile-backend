@@ -34,6 +34,9 @@ Thumbs.db
 # Flyway
 flyway-*
 flyway.conf
+flyway-dev.conf
+flyway-local.conf
+
 
 # Coverage & testing
 coverage/

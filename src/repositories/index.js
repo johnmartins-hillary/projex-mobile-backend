@@ -1019,16 +1019,62 @@ class DashboardRepository {
       params,
     );
 
-    const { rows: recentActivity } = await query(
-      `SELECT 'stock' AS activity_type, st.type, m.name AS entity_name, st.quantity, m.unit,
-              st.total_cost, st.created_at, u.first_name, u.last_name, p.name AS project_name
-       FROM stock_transactions st
-       JOIN materials m ON m.id=st.material_id
-       JOIN users u ON u.id=st.user_id
-       LEFT JOIN projects p ON p.id=st.project_id
-       WHERE m.company_id=$1 ORDER BY st.created_at DESC LIMIT 8`,
-      [companyId],
-    );
+   const { rows: recentActivity } = await query(
+     `SELECT * FROM (
+    -- Stock transactions
+    SELECT 'stock' AS activity_type, st.type::text AS type, m.name AS entity_name,
+           st.quantity::text AS quantity, m.unit, st.total_cost,
+           st.created_at, u.first_name, u.last_name, p.name AS project_name,
+           NULL::text AS extra
+    FROM stock_transactions st
+    JOIN materials m ON m.id = st.material_id
+    JOIN users u ON u.id = st.user_id
+    LEFT JOIN projects p ON p.id = st.project_id
+    WHERE m.company_id = $1
+
+    UNION ALL
+
+    -- Expenses
+    SELECT 'expense' AS activity_type, e.status::text AS type, e.description AS entity_name,
+           e.amount::text AS quantity, 'NGN'::text AS unit, e.amount AS total_cost,
+           e.created_at, u.first_name, u.last_name, p.name AS project_name,
+           e.category::text AS extra
+    FROM expenses e
+    JOIN users u ON u.id = e.submitted_by_id
+    JOIN projects p ON p.id = e.project_id
+    WHERE p.company_id = $1
+
+    UNION ALL
+
+    -- Visitors
+    SELECT 'visitor' AS activity_type, v.status::text AS type, v.full_name AS entity_name,
+           '1'::text AS quantity, 'visitor'::text AS unit, NULL::numeric AS total_cost,
+           v.time_in AS created_at, u.first_name, u.last_name, p.name AS project_name,
+           v.purpose::text AS extra
+    FROM visitors v
+    JOIN users u ON u.id = v.logged_by_id
+    JOIN projects p ON p.id = v.project_id
+    WHERE p.company_id = $1
+
+    UNION ALL
+
+    -- Attendance
+    SELECT 'attendance' AS activity_type, a.status::text AS type,
+           CONCAT(e.first_name, ' ', e.last_name) AS entity_name,
+           COALESCE(a.hours_worked::text, '0') AS quantity, 'hours'::text AS unit,
+           NULL::numeric AS total_cost,
+           a.check_in AS created_at, e.first_name, e.last_name, p.name AS project_name,
+           NULL::text AS extra
+    FROM attendances a
+    JOIN employees e ON e.id = a.employee_id
+    JOIN projects p ON p.id = a.project_id
+    WHERE p.company_id = $1
+
+  ) combined
+  ORDER BY created_at DESC
+  LIMIT 10`,
+     [companyId],
+   );
 
     return { overview: overview[0], weeklySpend, projects, recentActivity };
   }
