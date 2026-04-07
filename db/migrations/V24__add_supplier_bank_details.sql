@@ -1,0 +1,6 @@
+ALTER TABLE supplier_profiles 
+  ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS bank_code VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS account_number VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS account_name VARCHAR(200),
+  ADD COLUMN IF NOT EXISTS paystack_recipient_code VARCHAR(100);

@@ -79,13 +79,13 @@ class UserRepository extends BaseRepository {
       `INSERT INTO users (company_id, first_name, last_name, email, phone, password_hash, role)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
-        data.companyId,
+        data.companyId || null,
         data.firstName,
         data.lastName,
         data.email,
         data.phone || null,
         data.passwordHash,
-        data.role || "SITE_MANAGER",
+        data.role || null,
       ],
     );
     return rows[0];

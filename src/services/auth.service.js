@@ -39,58 +39,108 @@ const formatUser = (user, company) => ({
   phone: user.phone,
   role: user.role,
   avatarUrl: user.avatar_url,
-  language: user.language,
-  isEmailVerified: user.is_email_verified,
+  accountType: user.role === "SUPPLIER" ? "SUPPLIER" : "COMPANY",
   company: company
     ? {
         id: company.id,
         name: company.name,
         plan: company.plan,
-        logoUrl: company.logo_url,
-        primaryColor: company.primary_color || "#FF6A00",
-        secondaryColor: company.secondary_color || "#0A2342",
-        tagline: company.tagline || null,
         maxProjects: company.max_projects,
         maxUsers: company.max_users,
-        planExpiresAt: company.plan_expires_at,
+        logoUrl: company.logo_url,
+        primaryColor: company.primary_color,
+        secondaryColor: company.secondary_color,
+        tagline: company.tagline,
       }
-    : undefined,
+    : null,
 });
-
-const register = async ({
-  firstName,
-  lastName,
-  email,
-  phone,
-  password,
-  companyName,
-  role,
-}) => {
-  const existing = await userRepo.findByEmail(email);
+const register = async (data) => {
+  const existing = await userRepo.findByEmail(data.email);
   if (existing) throw new ConflictError("Email already registered");
 
-  const company = await companyRepo.create({ name: companyName, email, phone });
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(data.password, 12);
+
+  // SUPPLIER signup — no company needed
+  if (data.accountType === "SUPPLIER") {
+    const user = await userRepo.create({
+      firstName: data.firstName,
+      lastName: data.lastName,
+      email: data.email,
+      phone: data.phone || null,
+      passwordHash,
+      role: "SUPPLIER",
+      companyId: null,
+    });
+
+    const tokens = generateTokens(user);
+    await userRepo.updateRefreshToken(user.id, tokens.refreshToken);
+
+    // Send welcome email
+    const { sendEmail } = require("./email.service");
+    const { emailTemplates } = require("./email.service");
+    sendEmail({
+      to: user.email,
+      subject: "Welcome to Projex Marketplace!",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#0A2342;padding:32px;border-bottom:4px solid #FF6A00">
+            <h1 style="color:white;margin:0">🏪 Welcome to Projex Marketplace!</h1>
+          </div>
+          <div style="padding:32px">
+            <p>Hi ${data.firstName},</p>
+            <p>Your supplier account has been created. Start listing your products to reach thousands of construction companies across Nigeria.</p>
+            <p><strong>Next steps:</strong></p>
+            <ol>
+              <li>Complete your supplier profile</li>
+              <li>Add your products with prices</li>
+              <li>Start receiving orders!</li>
+            </ol>
+            <p><strong>The Projex Team</strong></p>
+          </div>
+        </div>
+      `,
+    }).catch(() => {});
+
+    return { ...tokens, user: formatUser(user, null), accountType: "SUPPLIER" };
+  }
+
+  // CONSTRUCTION COMPANY signup
+  const company = await companyRepo.create({
+    name: data.companyName,
+    email: data.email,
+    phone: data.phone || null,
+    plan: "STARTER",
+    maxProjects: 2,
+    maxUsers: 5,
+  });
+
   const user = await userRepo.create({
-    companyId: company.id,
-    firstName,
-    lastName,
-    email,
-    phone,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    email: data.email,
+    phone: data.phone || null,
     passwordHash,
-    role: role || "PROJECT_OWNER",
+    role: data.role || "PROJECT_OWNER",
+    companyId: company.id,
   });
 
   const tokens = generateTokens(user);
   await userRepo.updateRefreshToken(user.id, tokens.refreshToken);
 
+  // Send welcome email
+  const { sendEmail, emailTemplates } = require("./email.service");
+  const template = emailTemplates.welcome(
+    user.first_name,
+    company.name,
+    "STARTER",
+  );
   sendEmail({
-    to: email,
-    template: "welcome",
-    data: { firstName, companyName },
-  }).catch((e) => logger.error("Welcome email:", e.message));
+    to: user.email,
+    subject: template.subject,
+    html: template.html,
+  }).catch(() => {});
 
-  return { ...tokens, user: formatUser(user, company) };
+  return { ...tokens, user: formatUser(user, company), accountType: "COMPANY" };
 };
 
 const login = async ({ email, password }) => {
