@@ -61,6 +61,7 @@ const register = async (data) => {
   const passwordHash = await bcrypt.hash(data.password, 12);
 
   // SUPPLIER signup — no company needed
+  // SUPPLIER signup — no company needed
   if (data.accountType === "SUPPLIER") {
     const user = await userRepo.create({
       firstName: data.firstName,
@@ -72,38 +73,42 @@ const register = async (data) => {
       companyId: null,
     });
 
+    // Auto-create supplier profile linked to this user
+    await q(
+      `INSERT INTO supplier_profiles
+     (user_id, business_name, email, phone, city, state, is_active)
+     VALUES ($1, $2, $3, $4, 'Lagos', 'Lagos', TRUE)`,
+      [user.id, `${data.firstName}'s Store`, data.email, data.phone || null],
+    );
+
     const tokens = generateTokens(user);
     await userRepo.updateRefreshToken(user.id, tokens.refreshToken);
 
-    // Send welcome email
-    const { sendEmail } = require("./email.service");
-    const { emailTemplates } = require("./email.service");
     sendEmail({
       to: user.email,
       subject: "Welcome to Projex Marketplace!",
       html: `
-        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-          <div style="background:#0A2342;padding:32px;border-bottom:4px solid #FF6A00">
-            <h1 style="color:white;margin:0">🏪 Welcome to Projex Marketplace!</h1>
-          </div>
-          <div style="padding:32px">
-            <p>Hi ${data.firstName},</p>
-            <p>Your supplier account has been created. Start listing your products to reach thousands of construction companies across Nigeria.</p>
-            <p><strong>Next steps:</strong></p>
-            <ol>
-              <li>Complete your supplier profile</li>
-              <li>Add your products with prices</li>
-              <li>Start receiving orders!</li>
-            </ol>
-            <p><strong>The Projex Team</strong></p>
-          </div>
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+        <div style="background:#0A2342;padding:32px;border-bottom:4px solid #FF6A00">
+          <h1 style="color:white;margin:0">🏪 Welcome to Projex Marketplace!</h1>
         </div>
-      `,
+        <div style="padding:32px">
+          <p>Hi ${data.firstName},</p>
+          <p>Your supplier account has been created. Start listing your products to reach thousands of construction companies across Nigeria.</p>
+          <p><strong>Next steps:</strong></p>
+          <ol>
+            <li>Complete your supplier profile</li>
+            <li>Add your products with prices</li>
+            <li>Start receiving orders!</li>
+          </ol>
+          <p><strong>The Projex Team</strong></p>
+        </div>
+      </div>
+    `,
     }).catch(() => {});
 
     return { ...tokens, user: formatUser(user, null), accountType: "SUPPLIER" };
   }
-
   // CONSTRUCTION COMPANY signup
   const company = await companyRepo.create({
     name: data.companyName,
@@ -141,7 +146,7 @@ const register = async (data) => {
   }).catch(() => {});
 
   return { ...tokens, user: formatUser(user, company), accountType: "COMPANY" };
-};
+};;
 
 const login = async ({ email, password }) => {
   const user = await userRepo.findByEmail(email);

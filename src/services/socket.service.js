@@ -46,7 +46,6 @@ const initiateSupplierPayout = async (
   const { query: q } = require("../config/database");
   const { logger } = require("../utils/logger");
 
-  // Get supplier bank details
   const { rows } = await q(
     `SELECT paystack_recipient_code, business_name, account_number, bank_name
      FROM supplier_profiles WHERE id = $1`,
@@ -84,7 +83,7 @@ const initiateSupplierPayout = async (
       },
       body: JSON.stringify({
         source: "balance",
-        amount: Math.round(amount * 100), // kobo
+        amount: Math.round(amount * 100),
         recipient: supplier.paystack_recipient_code,
         reason: `Projex Order ${orderNumber} payout`,
         reference: `payout_${reference}_${Date.now()}`,
@@ -92,18 +91,44 @@ const initiateSupplierPayout = async (
     });
 
     const data = await r.json();
+
     if (data.status) {
       logger.info(
         `Transfer initiated: ${data.data.transfer_code} for ${orderNumber}`,
       );
       return { success: true, transferCode: data.data.transfer_code };
     } else {
+      // Handle specific Paystack errors
       logger.error(`Transfer failed for ${orderNumber}:`, data.message);
-      return { success: false, message: data.message };
+
+      // Starter business restriction
+      if (data.message?.toLowerCase().includes("starter")) {
+        return {
+          success: false,
+          message:
+            "Paystack account needs upgrade to enable transfers. Contact Projex support.",
+          manual: true, // Treat as manual payout needed
+        };
+      }
+
+      // Insufficient balance
+      if (
+        data.message?.toLowerCase().includes("balance") ||
+        data.message?.toLowerCase().includes("insufficient")
+      ) {
+        return {
+          success: false,
+          message:
+            "Insufficient Paystack balance. Top up your Paystack account.",
+          manual: true,
+        };
+      }
+
+      return { success: false, message: data.message, manual: true };
     }
   } catch (e) {
     logger.error("Transfer error:", e.message);
-    return { success: false, message: e.message };
+    return { success: false, message: e.message, manual: true };
   }
 };
 

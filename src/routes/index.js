@@ -337,13 +337,13 @@ router.patch(
 router.get(
   "/users",
   protect,
-  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SUPER_ADMIN_PROJEX"),
   ctrl.users.getAll,
 );
 router.post(
   "/users/invite",
   protect,
-  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SUPER_ADMIN_PROJEX"),
   [body("email").isEmail().normalizeEmail(), body("role").notEmpty(), validate],
   ctrl.users.invite,
 );
@@ -351,7 +351,7 @@ router.patch("/users/:id", protect, ctrl.users.update);
 router.patch(
   "/users/:id/toggle-active",
   protect,
-  authorize("SUPER_ADMIN", "PROJECT_OWNER"),
+  authorize("SUPER_ADMIN", "PROJECT_OWNER", "SUPER_ADMIN_PROJEX"),
   ctrl.users.toggleActive,
 );
 
@@ -3024,7 +3024,53 @@ router.patch(
       categories,
       logoUrl,
       bannerUrl,
+      bankName,
+      bankCode,
+      accountNumber,
+      accountName,
     } = req.body;
+
+    // Check supplier exists first
+    const { rows: existing } = await q(
+      "SELECT id FROM supplier_profiles WHERE user_id=$1",
+      [req.user.userId],
+    );
+    if (!existing[0]) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Supplier profile not found" });
+    }
+
+    // Create Paystack recipient if bank details provided
+    let recipientCode = null;
+    if (
+      accountNumber &&
+      bankCode &&
+      accountName &&
+      process.env.PAYSTACK_SECRET_KEY &&
+      process.env.PAYSTACK_SECRET_KEY !== "your_paystack_secret_key"
+    ) {
+      try {
+        const r = await fetch("https://api.paystack.co/transferrecipient", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "nuban",
+            name: accountName,
+            account_number: accountNumber,
+            bank_code: bankCode,
+            currency: "NGN",
+          }),
+        });
+        const data = await r.json();
+        if (data.status) recipientCode = data.data?.recipient_code;
+      } catch (e) {
+        logger.warn("Failed to create Paystack recipient:", e.message);
+      }
+    }
 
     const { rows } = await q(
       `UPDATE supplier_profiles SET
@@ -3041,8 +3087,13 @@ router.patch(
       categories = COALESCE($11, categories),
       logo_url = COALESCE($12, logo_url),
       banner_url = COALESCE($13, banner_url),
+      bank_name = COALESCE($14, bank_name),
+      bank_code = COALESCE($15, bank_code),
+      account_number = COALESCE($16, account_number),
+      account_name = COALESCE($17, account_name),
+      paystack_recipient_code = COALESCE($18, paystack_recipient_code),
       updated_at = NOW()
-     WHERE user_id = $14 RETURNING *`,
+     WHERE user_id = $19 RETURNING *`,
       [
         businessName,
         description,
@@ -3057,9 +3108,15 @@ router.patch(
         categories,
         logoUrl,
         bannerUrl,
+        bankName,
+        bankCode,
+        accountNumber,
+        accountName,
+        recipientCode,
         req.user.userId,
       ],
     );
+
     res.json({ success: true, data: rows[0] });
   }),
 );
@@ -3919,7 +3976,6 @@ router.post(
 
     const order = orderRows[0];
 
-    // Only allow release if order is DELIVERED
     if (order.status !== "DELIVERED") {
       return res.status(400).json({
         success: false,
@@ -3927,14 +3983,20 @@ router.post(
       });
     }
 
-    // Block double release
     if (order.escrow_status === "RELEASED") {
       return res
         .status(400)
         .json({ success: false, message: "Payment already released" });
     }
 
-    // Initiate real Paystack transfer to supplier
+    // Get supplier bank details for manual payout message
+    const { rows: supplierBankRows } = await q(
+      "SELECT bank_name, account_number, account_name FROM supplier_profiles WHERE id=$1",
+      [order.supplier_id],
+    );
+    const supplier = supplierBankRows[0];
+
+    // Initiate payout
     const payout = await initiateSupplierPayout(
       order.supplier_id,
       Number(order.supplier_amount),
@@ -3942,16 +4004,55 @@ router.post(
       order.payment_reference,
     );
 
-    if (!payout.success && !payout.manual) {
-      return res.status(500).json({
-        success: false,
-        message:
-          payout.message ||
-          "Transfer failed — check Paystack balance or supplier bank details",
+    // Manual payout required
+    if (!payout.success && payout.manual) {
+      await q(
+        `UPDATE escrow_transactions SET
+        status = 'RELEASED',
+        released_at = NOW(),
+        released_by = $1,
+        notes = $2,
+        updated_at = NOW()
+       WHERE id = $3`,
+        [
+          req.user.userId,
+          `Manual payout required: ${payout.message}`,
+          order.escrow_tx_id,
+        ],
+      );
+
+      await q(
+        "UPDATE marketplace_orders SET escrow_released=TRUE, updated_at=NOW() WHERE id=$1",
+        [req.params.id],
+      );
+
+      emitPaymentUpdate(req.app, {
+        companyId: order.company_id,
+        supplierId: order.supplier_id,
+        payment: {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          amount: order.supplier_amount,
+          status: "RELEASED",
+          message: `Payment approved. Manual bank transfer required.`,
+        },
+      });
+
+      return res.json({
+        success: true,
+        message: `⚠️ Payment approved but requires manual transfer:\n${payout.message}\n\nPlease transfer ₦${Number(order.supplier_amount).toLocaleString("en-NG")} to:\nBank: ${supplier?.bank_name || "N/A"}\nAccount: ${supplier?.account_number || "N/A"}\nName: ${supplier?.account_name || "N/A"}`,
+        data: { manual: true },
       });
     }
 
-    // Update escrow to RELEASED only after successful transfer
+    if (!payout.success) {
+      return res.status(500).json({
+        success: false,
+        message: payout.message || "Transfer failed",
+      });
+    }
+
+    // Successful transfer
     await q(
       `UPDATE escrow_transactions SET
       status = 'RELEASED',
@@ -3968,7 +4069,6 @@ router.post(
       [req.params.id],
     );
 
-    // Notify supplier and company via socket
     emitPaymentUpdate(req.app, {
       companyId: order.company_id,
       supplierId: order.supplier_id,
@@ -3978,17 +4078,13 @@ router.post(
         amount: order.supplier_amount,
         status: "RELEASED",
         transferCode: payout.transferCode,
-        message: payout.manual
-          ? `Manual payout required — supplier has no bank details`
-          : `₦${Number(order.supplier_amount).toLocaleString("en-NG")} sent to supplier`,
+        message: `₦${Number(order.supplier_amount).toLocaleString("en-NG")} sent to supplier`,
       },
     });
 
     res.json({
       success: true,
-      message: payout.manual
-        ? `Order marked released. Manual bank transfer required — supplier has no bank details on file.`
-        : `✓ ₦${Number(order.supplier_amount).toLocaleString("en-NG")} transfer initiated to supplier.`,
+      message: `✓ ₦${Number(order.supplier_amount).toLocaleString("en-NG")} transfer initiated to supplier.`,
       data: { transferCode: payout.transferCode },
     });
   }),
