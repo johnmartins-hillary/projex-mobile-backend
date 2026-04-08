@@ -10,6 +10,7 @@ const {
   AppError,
 } = require("../utils/errors");
 const { logger } = require("../utils/logger");
+const { query: q } = require("../config/database");
 
 const sign = (payload) =>
   jwt.sign(payload, process.env.JWT_SECRET, {
