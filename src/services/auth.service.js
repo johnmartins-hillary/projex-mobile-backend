@@ -1,16 +1,14 @@
 // ── services/auth.service.js ─────────────────────────────────
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { v4: uuidv4 } = require("uuid");
 const { userRepo, companyRepo } = require("../repositories");
-const { sendEmail } = require("./index");
 const {
   ConflictError,
   UnauthorizedError,
   AppError,
 } = require("../utils/errors");
-const { logger } = require("../utils/logger");
 const { query: q } = require("../config/database");
+const { sendEmail, emailTemplates } = require("./email.service");
 
 const sign = (payload) =>
   jwt.sign(payload, process.env.JWT_SECRET, {
@@ -134,7 +132,6 @@ const register = async (data) => {
   await userRepo.updateRefreshToken(user.id, tokens.refreshToken);
 
   // Send welcome email
-  const { sendEmail, emailTemplates } = require("./email.service");
   const template = emailTemplates.welcome(
     user.first_name,
     company.name,
@@ -147,7 +144,7 @@ const register = async (data) => {
   }).catch(() => {});
 
   return { ...tokens, user: formatUser(user, company), accountType: "COMPANY" };
-};;
+};
 
 const login = async ({ email, password }) => {
   const user = await userRepo.findByEmail(email);
@@ -194,8 +191,6 @@ const forgotPassword = async (email) => {
   const token = Math.floor(100000 + Math.random() * 900000).toString();
   const exp = new Date(Date.now() + 3600000); // 1 hour
   await userRepo.updateResetToken(user.id, token, exp);
-
-  const { sendEmail } = require("./email.service");
 
   await sendEmail({
     to: email,
