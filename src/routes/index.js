@@ -2,79 +2,8 @@ const express = require("express");
 const { body } = require("express-validator");
 const { protect, authorize, validate, asyncHandler } = require("../middleware");
 const ctrl = require("../controllers");
-const { query: q, withTransaction: wt } = require("../config/database");
-
+const { query: q, withTransaction: wt, query } = require("../config/database");
 const router = express.Router();
-
-// ── PLANS ─────────────────────────────────────────────────────
-router.get(
-  "/plans",
-  asyncHandler(async (req, res) => {
-    const plans = [
-      {
-        id: "STARTER",
-        name: "Starter",
-        price: 0,
-        currency: "NGN",
-        interval: "month",
-        description: "Perfect for getting started",
-        maxProjects: 2,
-        maxUsers: 5,
-        features: [
-          "2 active projects",
-          "5 team members",
-          "Basic reports",
-          "Material tracking",
-          "Site diary",
-          "Standard support",
-        ],
-        isFree: true,
-      },
-      {
-        id: "PRO",
-        name: "Pro",
-        price: 15000,
-        currency: "NGN",
-        interval: "month",
-        description: "For growing construction firms",
-        maxProjects: 10,
-        maxUsers: 25,
-        features: [
-          "10 active projects",
-          "25 team members",
-          "Advanced reports",
-          "All modules included",
-          "Client portal",
-          "Priority support",
-          "Data export",
-        ],
-        isFree: false,
-        isPopular: true,
-      },
-      {
-        id: "ENTERPRISE",
-        name: "Enterprise",
-        price: 40000,
-        currency: "NGN",
-        interval: "month",
-        description: "For large construction companies",
-        maxProjects: 999,
-        maxUsers: 999,
-        features: [
-          "Unlimited projects",
-          "Unlimited team members",
-          "White label branding",
-          "Dedicated account manager",
-          "Custom integrations",
-          "SLA support",
-          "AI features included",
-        ],
-        isFree: false,
-      },
-    ];
-    res.json({ success: true, data: plans });
-  }),
-);
 
 // ── AUTH ──────────────────────────────────────────────────────
 router.post(
@@ -2589,13 +2518,11 @@ router.get(
   "/reports/weekly",
   protect,
   asyncHandler(async (req, res) => {
-    console.log("Generating report for company:", req.user.companyId);
     const {
       generateWeeklyReport,
       formatWhatsAppReport,
     } = require("../services/weeklyReport.service");
     const data = await generateWeeklyReport(req.user.companyId);
-    console.log("Report data:", data);
     if (!data)
       return res
         .status(404)
@@ -2750,6 +2677,7 @@ router.get(
       limit = 20,
       offset = 0,
     } = req.query;
+
     const conds = ["sp.is_active = TRUE"];
     const params = [];
     let i = 1;
@@ -2774,13 +2702,12 @@ router.get(
       params.push(category);
     }
 
-    // Distance filter if coordinates provided
     let distanceSelect = "NULL::numeric AS distance_km";
     if (lat && lng) {
-      distanceSelect = `ROUND((6371 * acos(cos(radians($${i})) * cos(radians(sp.latitude)) * cos(radians(sp.longitude) - radians($${i + 1})) + sin(radians($${i})) * sin(radians(sp.latitude))))::numeric, 1) AS distance_km`;
+      distanceSelect = `ROUND((6371 * acos(LEAST(1, cos(radians($${i})) * cos(radians(sp.latitude)) * cos(radians(sp.longitude) - radians($${i + 1})) + sin(radians($${i})) * sin(radians(sp.latitude)))))::numeric, 1) AS distance_km`;
       conds.push(`sp.latitude IS NOT NULL AND sp.longitude IS NOT NULL`);
       conds.push(
-        `(6371 * acos(cos(radians($${i})) * cos(radians(sp.latitude)) * cos(radians(sp.longitude) - radians($${i + 1})) + sin(radians($${i})) * sin(radians(sp.latitude)))) <= $${i + 2}`,
+        `(6371 * acos(LEAST(1, cos(radians($${i})) * cos(radians(sp.latitude)) * cos(radians(sp.longitude) - radians($${i + 1})) + sin(radians($${i})) * sin(radians(sp.latitude))))) <= $${i + 2}`,
       );
       params.push(parseFloat(lat), parseFloat(lng), parseFloat(radius));
       i += 3;
@@ -2790,17 +2717,29 @@ router.get(
 
     const { rows } = await q(
       `SELECT sp.*, ${distanceSelect},
-      (SELECT COUNT(*) FROM supplier_products WHERE supplier_id = sp.id AND is_available = TRUE) AS product_count,
-      (SELECT json_agg(p.*) FROM supplier_products p WHERE p.supplier_id = sp.id AND p.is_available = TRUE LIMIT 4) AS featured_products
-     FROM supplier_profiles sp
-     WHERE ${conds.join(" AND ")}
-     ORDER BY sp.is_verified DESC, sp.rating DESC, ${lat && lng ? "distance_km ASC," : ""} sp.created_at DESC
-     LIMIT $${i++} OFFSET $${i++}`,
+        (SELECT COUNT(*) FROM supplier_products WHERE supplier_id = sp.id AND is_available = TRUE) AS product_count,
+        (SELECT json_agg(p.*) FROM supplier_products p WHERE p.supplier_id = sp.id AND p.is_available = TRUE LIMIT 4) AS featured_products,
+        EXISTS (
+          SELECT 1 FROM featured_placements fp
+          WHERE fp.supplier_id = sp.id
+          AND fp.type = 'STORE'
+          AND fp.is_active = TRUE
+          AND fp.ends_at > NOW()
+        ) AS is_featured_store
+       FROM supplier_profiles sp
+       WHERE ${conds.join(" AND ")}
+       ORDER BY
+         is_featured_store DESC,
+         ${lat && lng ? "distance_km ASC," : ""}
+         sp.is_verified DESC,
+         sp.rating DESC,
+         sp.created_at DESC
+       LIMIT $${i++} OFFSET $${i++}`,
       params,
     );
 
     const { rows: countRows } = await q(
-      `SELECT COUNT(*) FROM supplier_profiles sp WHERE ${conds.slice(0, conds.length).join(" AND ")}`,
+      `SELECT COUNT(*) FROM supplier_profiles sp WHERE ${conds.join(" AND ")}`,
       params.slice(0, params.length - 2),
     );
 
@@ -2852,6 +2791,7 @@ router.get(
       limit = 30,
       offset = 0,
     } = req.query;
+
     const conds = ["p.is_available = TRUE", "sp.is_active = TRUE"];
     const params = [];
     let i = 1;
@@ -2876,20 +2816,48 @@ router.get(
       params.push(parseFloat(maxPrice));
     }
 
+    let distanceSelect = "NULL::numeric AS supplier_distance_km";
+    if (lat && lng) {
+      distanceSelect = `ROUND((6371 * acos(LEAST(1, cos(radians($${i})) * cos(radians(sp.latitude)) * cos(radians(sp.longitude) - radians($${i + 1})) + sin(radians($${i})) * sin(radians(sp.latitude)))))::numeric, 1) AS supplier_distance_km`;
+      params.push(parseFloat(lat), parseFloat(lng));
+      i += 2;
+    }
+
     params.push(parseInt(limit), parseInt(offset));
 
     const { rows } = await q(
-      `SELECT p.*,
-      sp.business_name AS supplier_name, sp.city, sp.state,
-      sp.rating AS supplier_rating, sp.is_verified,
-      sp.whatsapp AS supplier_whatsapp, sp.delivery_radius_km
-     FROM supplier_products p
-     JOIN supplier_profiles sp ON sp.id = p.supplier_id
-     WHERE ${conds.join(" AND ")}
-     ORDER BY sp.is_verified DESC, p.is_featured DESC, sp.rating DESC
-     LIMIT $${i++} OFFSET $${i++}`,
+      `SELECT p.*, ${distanceSelect},
+        sp.business_name AS supplier_name, sp.city, sp.state,
+        sp.rating AS supplier_rating, sp.is_verified,
+        sp.whatsapp AS supplier_whatsapp, sp.delivery_radius_km,
+        EXISTS (
+          SELECT 1 FROM featured_placements fp
+          WHERE fp.product_id = p.id
+          AND fp.type = 'PRODUCT'
+          AND fp.is_active = TRUE
+          AND fp.ends_at > NOW()
+        ) AS is_featured_product,
+        EXISTS (
+          SELECT 1 FROM featured_placements fp2
+          WHERE fp2.supplier_id = p.supplier_id
+          AND fp2.type = 'STORE'
+          AND fp2.is_active = TRUE
+          AND fp2.ends_at > NOW()
+        ) AS supplier_is_featured
+       FROM supplier_products p
+       JOIN supplier_profiles sp ON sp.id = p.supplier_id
+       WHERE ${conds.join(" AND ")}
+       ORDER BY
+         is_featured_product DESC,
+         supplier_is_featured DESC,
+         ${lat && lng ? "supplier_distance_km ASC," : ""}
+         sp.is_verified DESC,
+         sp.rating DESC,
+         p.created_at DESC
+       LIMIT $${i++} OFFSET $${i++}`,
       params,
     );
+
     res.json({ success: true, data: rows });
   }),
 );
@@ -3616,8 +3584,21 @@ router.post(
         (s, i) => s + Number(i.quantity) * Number(i.unitPrice),
         0,
       );
-      const commissionRate = 3.0;
-      const commissionAmount = subtotal * (commissionRate / 100);
+      // Fetch commission rate for this supplier
+      const { rows: commRows } = await query(
+        "SELECT * FROM commission_settings LIMIT 1",
+      );
+      const settings = commRows[0] || { global_rate: 3, minimum_amount: 500 };
+
+      const { rows: supRows } = await query(
+        "SELECT custom_commission_rate FROM supplier_profiles WHERE id = $1",
+        [group.supplierId],
+      );
+      const rate = supRows[0]?.custom_commission_rate ?? settings.global_rate;
+      const commissionAmount = Math.max(
+        (subtotal * rate) / 100,
+        settings.minimum_amount,
+      );
       const supplierAmount = subtotal - commissionAmount;
 
       // Get supplier profile id
@@ -3645,7 +3626,7 @@ router.post(
           req.user.companyId,
           supplierRows[0].id,
           subtotal,
-          commissionRate,
+          rate,
           commissionAmount,
           supplierAmount,
           reference,
@@ -4361,6 +4342,914 @@ router.patch(
       ],
     );
     res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── COMMISSION ──────────────────────────────────────────────────────────────
+router.get(
+  "/admin/commission",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows } = await query("SELECT * FROM commission_settings LIMIT 1");
+    res.json({
+      success: true,
+      data: rows[0] || { global_rate: 3, minimum_amount: 500 },
+    });
+  }),
+);
+
+router.put(
+  "/admin/commission",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { globalRate, minimumAmount } = req.body;
+    const { rows } = await query(
+      `INSERT INTO commission_settings (global_rate, minimum_amount, updated_by, updated_at, singleton)
+     VALUES ($1, $2, $3, NOW(), true)
+     ON CONFLICT (singleton) DO UPDATE
+       SET global_rate = $1, minimum_amount = $2, updated_by = $3, updated_at = NOW()
+     RETURNING *`,
+      [globalRate, minimumAmount, req.user.userId],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.put(
+  "/admin/commission/supplier/:supplierId",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rate, note } = req.body;
+    const { rows } = await query(
+      `UPDATE supplier_profiles
+     SET custom_commission_rate = $1, commission_note = $2
+     WHERE id = $3 RETURNING *`,
+      [rate ?? null, note || null, req.params.supplierId],
+    );
+    if (!rows.length) throw new AppError("Supplier not found", 404);
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// ── PLANS ─────────────────────────────────────────────────────
+router.get(
+  "/plans",
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      "SELECT * FROM plans WHERE is_active = true ORDER BY sort_order ASC",
+    );
+    const plans = rows.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      currency: p.currency,
+      interval: p.interval,
+      description: p.description,
+      maxProjects: p.max_projects,
+      maxUsers: p.max_users,
+      features: p.features,
+      isFree: p.is_free,
+      isPopular: p.is_popular,
+    }));
+    res.json({ success: true, data: plans });
+  }),
+);
+
+// ── ADMIN PLAN MANAGEMENT ──────────────────────────────────────────────────
+router.get(
+  "/admin/plans",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows } = await query("SELECT * FROM plans ORDER BY sort_order ASC");
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.post(
+  "/admin/plans",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const {
+      id,
+      name,
+      price,
+      description,
+      maxProjects,
+      maxUsers,
+      features,
+      isFree,
+      isPopular,
+      sortOrder,
+    } = req.body;
+    const { rows } = await query(
+      `INSERT INTO plans (id, name, price, description, max_projects, max_users, features, is_free, is_popular, sort_order, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true) RETURNING *`,
+      [
+        id.toUpperCase(),
+        name,
+        price || 0,
+        description || null,
+        maxProjects,
+        maxUsers,
+        JSON.stringify(features || []),
+        isFree || false,
+        isPopular || false,
+        sortOrder || 0,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+router.put(
+  "/admin/plans/:planId",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const {
+      name,
+      price,
+      description,
+      maxProjects,
+      maxUsers,
+      features,
+      isFree,
+      isPopular,
+      isActive,
+      sortOrder,
+    } = req.body;
+    const { rows } = await query(
+      `UPDATE plans SET
+      name = COALESCE($1, name),
+      price = COALESCE($2, price),
+      description = COALESCE($3, description),
+      max_projects = COALESCE($4, max_projects),
+      max_users = COALESCE($5, max_users),
+      features = COALESCE($6, features),
+      is_free = COALESCE($7, is_free),
+      is_popular = COALESCE($8, is_popular),
+      is_active = COALESCE($9, is_active),
+      sort_order = COALESCE($10, sort_order),
+      updated_at = NOW()
+     WHERE id = $11 RETURNING *`,
+      [
+        name,
+        price,
+        description,
+        maxProjects,
+        maxUsers,
+        features ? JSON.stringify(features) : null,
+        isFree,
+        isPopular,
+        isActive,
+        sortOrder,
+        req.params.planId,
+      ],
+    );
+    if (!rows.length) throw new AppError("Plan not found", 404);
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+router.delete(
+  "/admin/plans/:planId",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    // Soft delete only — never hard delete a plan
+    const { rows } = await query(
+      "UPDATE plans SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING id",
+      [req.params.planId],
+    );
+    if (!rows.length) throw new AppError("Plan not found", 404);
+    res.json({ success: true, message: "Plan deactivated" });
+  }),
+);
+
+// Admin override a company's plan without payment
+router.put(
+  "/admin/companies/:companyId/plan",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { planId, trialDays, note } = req.body;
+
+    const { rows: planRows } = await query(
+      "SELECT * FROM plans WHERE id = $1",
+      [planId],
+    );
+    if (!planRows.length) throw new AppError("Plan not found", 404);
+    const plan = planRows[0];
+
+    const trialEndsAt = trialDays
+      ? new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000)
+      : null;
+
+    const { rows } = await query(
+      `UPDATE companies SET
+      plan = $1,
+      max_projects = $2,
+      max_users = $3,
+      plan_expires_at = $4,
+      trial_ends_at = $5,
+      plan_override_by = $6,
+      plan_override_note = $7,
+      updated_at = NOW()
+     WHERE id = $8 RETURNING *`,
+      [
+        plan.id,
+        plan.max_projects,
+        plan.max_users,
+        trialEndsAt,
+        trialEndsAt,
+        req.user.userId,
+        note || null,
+        req.params.companyId,
+      ],
+    );
+    if (!rows.length) throw new AppError("Company not found", 404);
+    res.json({
+      success: true,
+      data: rows[0],
+      message: `Plan updated to ${plan.name}`,
+    });
+  }),
+);
+
+// ── ADMIN SUBSCRIPTION REVENUE ─────────────────────────────────────────────
+router.get(
+  "/admin/payments",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { page = 1, limit = 50, plan, status } = req.query;
+    const offset = (page - 1) * limit;
+
+    let where = "WHERE p.status = 'success'";
+    const params = [];
+
+    if (plan) {
+      params.push(plan);
+      where += ` AND s.plan = $${params.length}`;
+    }
+    if (status) {
+      params.push(status);
+      where += ` AND p.status = $${params.length}`;
+    }
+
+    params.push(limit, offset);
+
+    const { rows: payments } = await query(
+      `SELECT
+       p.id, p.amount, p.status, p.paid_at, p.paystack_ref,
+       p.created_at, p.metadata,
+       s.plan, s.started_at, s.expires_at,
+       c.name AS company_name,
+       u.email AS company_email,
+       u.first_name, u.last_name
+     FROM payments p
+     LEFT JOIN subscriptions s ON s.id = p.subscription_id
+     LEFT JOIN companies c ON c.id = p.company_id
+     LEFT JOIN users u ON u.company_id = p.company_id AND u.role = 'PROJECT_OWNER'
+     ${where}
+     ORDER BY p.paid_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    const { rows: stats } = await query(
+      `SELECT
+       COUNT(*) FILTER (WHERE status = 'success') AS total_payments,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'success'), 0) AS total_revenue,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'success' AND paid_at >= date_trunc('month', NOW())), 0) AS this_month,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'success' AND paid_at >= date_trunc('month', NOW()) - interval '1 month'
+         AND paid_at < date_trunc('month', NOW())), 0) AS last_month,
+       COUNT(DISTINCT company_id) FILTER (WHERE status = 'success') AS paying_companies
+     FROM payments`,
+    );
+
+    res.json({ success: true, data: { payments, stats: stats[0] } });
+  }),
+);
+
+// ── PLATFORM SETTINGS ──────────────────────────────────────────────────────
+router.get(
+  "/admin/settings",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      "SELECT * FROM platform_settings ORDER BY key ASC",
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+router.put(
+  "/admin/settings/:key",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { value } = req.body;
+    const { rows } = await query(
+      `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = NOW()
+     RETURNING *`,
+      [req.params.key, String(value), req.user.userId],
+    );
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// Public — supplier app reads prices
+router.get(
+  "/settings/featured-pricing",
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      "SELECT key, value FROM platform_settings WHERE key IN ('featured_store_price_monthly', 'featured_product_price_weekly')",
+    );
+    const pricing = {};
+    rows.forEach((r) => {
+      pricing[r.key] = parseInt(r.value);
+    });
+    res.json({ success: true, data: pricing });
+  }),
+);
+
+// ── FEATURED PLACEMENT ─────────────────────────────────────────────────────
+
+// Supplier: initialize payment for featured placement
+router.post(
+  "/supplier/featured/initialize",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { type, productId, autoRenew } = req.body;
+    if (!["STORE", "PRODUCT"].includes(type))
+      throw new AppError("Invalid type", 400);
+    if (type === "PRODUCT" && !productId)
+      throw new AppError("productId required for PRODUCT type", 400);
+
+    // Get supplier profile
+    const { rows: spRows } = await query(
+      "SELECT id FROM supplier_profiles WHERE user_id = $1",
+      [req.user.userId],
+    );
+    if (!spRows.length) throw new AppError("Supplier profile not found", 404);
+    const supplierId = spRows[0].id;
+
+    // Get pricing
+    const priceKey =
+      type === "STORE"
+        ? "featured_store_price_monthly"
+        : "featured_product_price_weekly";
+    const { rows: priceRows } = await query(
+      "SELECT value FROM platform_settings WHERE key = $1",
+      [priceKey],
+    );
+    const amount = parseInt(
+      priceRows[0]?.value || (type === "STORE" ? "15000" : "5000"),
+    );
+    const durationDays = type === "STORE" ? 30 : 7;
+
+    // Check no active placement of same type
+    const { rows: existing } = await query(
+      `SELECT id FROM featured_placements
+     WHERE supplier_id = $1 AND type = $2
+     AND is_active = true AND ends_at > NOW()
+     AND ($3::uuid IS NULL OR product_id = $3)`,
+      [supplierId, type, productId || null],
+    );
+    if (existing.length)
+      throw new AppError(`You already have an active ${type} placement`, 400);
+
+    // Get supplier email for Paystack
+    const { rows: userRows } = await query(
+      "SELECT email FROM users WHERE id = $1",
+      [req.user.userId],
+    );
+
+    // Initialize Paystack payment
+    const reference = `feat_${type.toLowerCase()}_${supplierId}_${Date.now()}`;
+    const paystackRes = await fetch(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: userRows[0].email,
+          amount: amount * 100,
+          reference,
+          metadata: {
+            type,
+            supplierId,
+            productId: productId || null,
+            autoRenew: autoRenew || false,
+            durationDays,
+            featurePlacement: true,
+          },
+          callback_url: `${process.env.FRONTEND_URL}/supplier/featured/verify`,
+        }),
+      },
+    );
+    const paystackData = await paystackRes.json();
+    if (!paystackData.status)
+      throw new AppError("Payment initialization failed", 500);
+
+    // Create pending placement record
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const { rows: placementRows } = await query(
+      `INSERT INTO featured_placements
+       (type, supplier_id, product_id, starts_at, ends_at, duration_days,
+        amount_paid, payment_reference, payment_status, auto_renew, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', $9, false)
+     RETURNING *`,
+      [
+        type,
+        supplierId,
+        productId || null,
+        now,
+        endsAt,
+        durationDays,
+        amount,
+        reference,
+        autoRenew || false,
+      ],
+    );
+    const placement = placementRows[0];
+
+    // Record pending payment
+    await query(
+      `INSERT INTO featured_placement_payments
+       (featured_placement_id, supplier_id, paystack_ref, amount, status, period_start, period_end)
+     VALUES ($1, $2, $3, $4, 'PENDING', $5, $6)`,
+      [placement.id, supplierId, reference, amount, now, endsAt],
+    );
+
+    res.json({
+      success: true,
+      data: {
+        authorizationUrl: paystackData.data.authorization_url,
+        reference,
+        amount,
+        placementId: placement.id,
+      },
+    });
+  }),
+);
+
+// Supplier: verify payment after redirect
+router.post(
+  "/supplier/featured/verify",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { reference } = req.body;
+
+    // Verify with Paystack
+    const paystackRes = await fetch(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+      },
+    );
+    const paystackData = await paystackRes.json();
+
+    if (!paystackData.status || paystackData.data.status !== "success") {
+      throw new AppError("Payment verification failed", 400);
+    }
+
+    const authCode =
+      paystackData.data.authorization?.authorization_code || null;
+
+    // Activate placement
+    const { rows: placementRows } = await query(
+      `UPDATE featured_placements SET
+       payment_status = 'SUCCESS',
+       paystack_authorization_code = $1,
+       is_active = true,
+       updated_at = NOW()
+     WHERE payment_reference = $2
+     RETURNING *`,
+      [authCode, reference],
+    );
+    if (!placementRows.length) throw new AppError("Placement not found", 404);
+    const placement = placementRows[0];
+
+    // Update payment record
+    await query(
+      `UPDATE featured_placement_payments SET
+       status = 'SUCCESS',
+       paystack_authorization_code = $1,
+       paid_at = NOW()
+     WHERE paystack_ref = $2`,
+      [authCode, reference],
+    );
+
+    // If product placement, mark product as featured
+    if (placement.product_id) {
+      await query(
+        "UPDATE supplier_products SET is_featured = true WHERE id = $1",
+        [placement.product_id],
+      );
+    }
+
+    res.json({
+      success: true,
+      data: placement,
+      message: "Placement activated successfully",
+    });
+  }),
+);
+
+// Supplier: get my active placements
+router.get(
+  "/supplier/featured",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows: spRows } = await query(
+      "SELECT id FROM supplier_profiles WHERE user_id = $1",
+      [req.user.userId],
+    );
+    if (!spRows.length) throw new AppError("Supplier not found", 404);
+
+    const { rows } = await query(
+      `SELECT fp.*, fpp.paid_at, fpp.amount AS last_payment_amount
+     FROM featured_placements fp
+     LEFT JOIN featured_placement_payments fpp ON fpp.featured_placement_id = fp.id
+       AND fpp.status = 'SUCCESS'
+     WHERE fp.supplier_id = $1
+     ORDER BY fp.created_at DESC`,
+      [spRows[0].id],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+// Supplier: cancel auto-renew
+router.put(
+  "/supplier/featured/:placementId/cancel",
+  protect,
+  asyncHandler(async (req, res) => {
+    const { rows: spRows } = await query(
+      "SELECT id FROM supplier_profiles WHERE user_id = $1",
+      [req.user.userId],
+    );
+    const { rows } = await query(
+      `UPDATE featured_placements SET auto_renew = false, cancelled_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND supplier_id = $2 RETURNING *`,
+      [req.params.placementId, spRows[0]?.id],
+    );
+    if (!rows.length) throw new AppError("Placement not found", 404);
+    res.json({
+      success: true,
+      message: "Auto-renew cancelled. Placement runs until expiry.",
+    });
+  }),
+);
+
+// ── ADMIN FEATURED PLACEMENT MANAGEMENT ───────────────────────────────────
+
+// Admin: get all placements with revenue stats
+router.get(
+  "/admin/featured",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows: placements } = await query(
+      `SELECT fp.*,
+       sp.business_name  AS supplier_name,
+       sp2.name AS product_name,
+       COUNT(fpp.id) FILTER (WHERE fpp.status = 'SUCCESS') AS payment_count,
+       COALESCE(SUM(fpp.amount) FILTER (WHERE fpp.status = 'SUCCESS'), 0) AS total_earned
+     FROM featured_placements fp
+     LEFT JOIN supplier_profiles sp ON sp.id = fp.supplier_id
+     LEFT JOIN supplier_products sp2 ON sp2.id = fp.product_id
+     LEFT JOIN featured_placement_payments fpp ON fpp.featured_placement_id = fp.id
+     GROUP BY fp.id, sp.business_name , sp2.name
+     ORDER BY fp.created_at DESC`,
+    );
+
+    const { rows: stats } = await query(
+      `SELECT
+       COUNT(*) FILTER (WHERE is_active = true AND ends_at > NOW()) AS active_placements,
+       COUNT(*) FILTER (WHERE type = 'STORE' AND is_active = true AND ends_at > NOW()) AS active_stores,
+       COUNT(*) FILTER (WHERE type = 'PRODUCT' AND is_active = true AND ends_at > NOW()) AS active_products,
+       COALESCE(SUM(fpp.amount) FILTER (WHERE fpp.status = 'SUCCESS'), 0) AS total_revenue,
+       COALESCE(SUM(fpp.amount) FILTER (WHERE fpp.status = 'SUCCESS' AND fpp.paid_at >= date_trunc('month', NOW())), 0) AS this_month
+     FROM featured_placements fp
+     LEFT JOIN featured_placement_payments fpp ON fpp.featured_placement_id = fp.id`,
+    );
+
+    res.json({ success: true, data: { placements, stats: stats[0] } });
+  }),
+);
+
+// Admin: grant free placement
+router.post(
+  "/admin/featured/grant",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { supplierId, type, productId, durationDays, notes } = req.body;
+    if (!["STORE", "PRODUCT"].includes(type))
+      throw new AppError("Invalid type", 400);
+
+    const now = new Date();
+    const endsAt = new Date(
+      now.getTime() + (durationDays || 30) * 24 * 60 * 60 * 1000,
+    );
+
+    const { rows } = await query(
+      `INSERT INTO featured_placements
+       (type, supplier_id, product_id, starts_at, ends_at, duration_days,
+        amount_paid, payment_status, is_active, is_free, granted_by, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, 0, 'SUCCESS', true, true, $7, $8)
+     RETURNING *`,
+      [
+        type,
+        supplierId,
+        productId || null,
+        now,
+        endsAt,
+        durationDays || 30,
+        req.user.userId,
+        notes || null,
+      ],
+    );
+    const placement = rows[0];
+
+    // Record as free payment
+    await query(
+      `INSERT INTO featured_placement_payments
+       (featured_placement_id, supplier_id, amount, status, period_start, period_end, is_free, granted_by, paid_at)
+     VALUES ($1, $2, 0, 'SUCCESS', $3, $4, true, $5, NOW())`,
+      [placement.id, supplierId, now, endsAt, req.user.userId],
+    );
+
+    // If product, mark as featured
+    if (productId) {
+      await query(
+        "UPDATE supplier_products SET is_featured = true WHERE id = $1",
+        [productId],
+      );
+    }
+
+    res.status(201).json({
+      success: true,
+      data: placement,
+      message: "Placement granted successfully",
+    });
+  }),
+);
+
+// Admin: deactivate a placement early
+router.put(
+  "/admin/featured/:placementId/deactivate",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      `UPDATE featured_placements SET is_active = false, cancelled_at = NOW(), updated_at = NOW()
+     WHERE id = $1 RETURNING *, product_id`,
+      [req.params.placementId],
+    );
+    if (!rows.length) throw new AppError("Placement not found", 404);
+
+    if (rows[0].product_id) {
+      await query(
+        "UPDATE supplier_products SET is_featured = false WHERE id = $1",
+        [rows[0].product_id],
+      );
+    }
+
+    res.json({ success: true, message: "Placement deactivated" });
+  }),
+);
+
+// Cron-style: auto-expire placements (call this from a cron job or on each request)
+router.post(
+  "/admin/featured/expire",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    // Deactivate expired placements
+    const { rows: expired } = await query(
+      `UPDATE featured_placements SET is_active = false, updated_at = NOW()
+     WHERE is_active = true AND ends_at < NOW()
+     RETURNING id, product_id`,
+    );
+
+    // Remove featured flag from expired products
+    for (const p of expired) {
+      if (p.product_id) {
+        await query(
+          "UPDATE supplier_products SET is_featured = false WHERE id = $1",
+          [p.product_id],
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${expired.length} placements expired`,
+    });
+  }),
+);
+
+// ── ADS ────────────────────────────────────────────────────────────────────
+
+// Public — mobile app fetches active ads by placement
+router.get(
+  "/ads",
+  asyncHandler(async (req, res) => {
+    const { placement } = req.query;
+    const conds = ["is_active = TRUE", "starts_at <= NOW()", "ends_at > NOW()"];
+    const params = [];
+
+    if (placement) {
+      params.push(placement);
+      conds.push(`placement = $${params.length}`);
+    }
+
+    const { rows } = await query(
+      `SELECT id, title, description, image_url, link_url, placement, advertiser_name
+     FROM advertisements
+     WHERE ${conds.join(" AND ")}
+     ORDER BY amount_paid DESC, created_at DESC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
+// Public — track impression (fire and forget)
+router.post(
+  "/ads/:id/impression",
+  asyncHandler(async (req, res) => {
+    await query(
+      "UPDATE advertisements SET impressions = impressions + 1 WHERE id = $1",
+      [req.params.id],
+    );
+    res.json({ success: true });
+  }),
+);
+
+// Public — track click
+router.post(
+  "/ads/:id/click",
+  asyncHandler(async (req, res) => {
+    await query("UPDATE advertisements SET clicks = clicks + 1 WHERE id = $1", [
+      req.params.id,
+    ]);
+    res.json({ success: true });
+  }),
+);
+
+// Admin — get all ads with stats
+router.get(
+  "/admin/ads",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT *, 
+       CASE WHEN is_active AND starts_at <= NOW() AND ends_at > NOW() THEN 'LIVE'
+            WHEN ends_at <= NOW() THEN 'EXPIRED'
+            WHEN starts_at > NOW() THEN 'SCHEDULED'
+            ELSE 'INACTIVE' END AS status
+     FROM advertisements
+     ORDER BY created_at DESC`,
+    );
+
+    const { rows: stats } = await query(
+      `SELECT
+       COUNT(*) FILTER (WHERE is_active AND ends_at > NOW()) AS live_ads,
+       COALESCE(SUM(amount_paid), 0) AS total_revenue,
+       COALESCE(SUM(impressions), 0) AS total_impressions,
+       COALESCE(SUM(clicks), 0) AS total_clicks
+     FROM advertisements`,
+    );
+
+    res.json({ success: true, data: { ads: rows, stats: stats[0] } });
+  }),
+);
+
+// Admin — create ad
+router.post(
+  "/admin/ads",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const {
+      title,
+      description,
+      imageUrl,
+      linkUrl,
+      placement,
+      advertiserName,
+      advertiserContact,
+      amountPaid,
+      startsAt,
+      endsAt,
+    } = req.body;
+
+    const { rows } = await query(
+      `INSERT INTO advertisements
+       (title, description, image_url, link_url, placement,
+        advertiser_name, advertiser_contact, amount_paid,
+        starts_at, ends_at, is_active, uploaded_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, FALSE, $11)
+     RETURNING *`,
+      [
+        title,
+        description || null,
+        imageUrl,
+        linkUrl || null,
+        placement,
+        advertiserName,
+        advertiserContact || null,
+        amountPaid || 0,
+        startsAt,
+        endsAt,
+        req.user.userId,
+      ],
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
+
+// Admin — update ad
+router.put(
+  "/admin/ads/:id",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    const {
+      title,
+      description,
+      imageUrl,
+      linkUrl,
+      placement,
+      advertiserName,
+      advertiserContact,
+      amountPaid,
+      startsAt,
+      endsAt,
+      isActive,
+    } = req.body;
+
+    const { rows } = await query(
+      `UPDATE advertisements SET
+       title = COALESCE($1, title),
+       description = COALESCE($2, description),
+       image_url = COALESCE($3, image_url),
+       link_url = COALESCE($4, link_url),
+       placement = COALESCE($5, placement),
+       advertiser_name = COALESCE($6, advertiser_name),
+       advertiser_contact = COALESCE($7, advertiser_contact),
+       amount_paid = COALESCE($8, amount_paid),
+       starts_at = COALESCE($9, starts_at),
+       ends_at = COALESCE($10, ends_at),
+       is_active = COALESCE($11, is_active),
+       updated_at = NOW()
+     WHERE id = $12 RETURNING *`,
+      [
+        title,
+        description,
+        imageUrl,
+        linkUrl,
+        placement,
+        advertiserName,
+        advertiserContact,
+        amountPaid,
+        startsAt,
+        endsAt,
+        isActive,
+        req.params.id,
+      ],
+    );
+    if (!rows.length) throw new AppError("Ad not found", 404);
+    res.json({ success: true, data: rows[0] });
+  }),
+);
+
+// Admin — delete ad
+router.delete(
+  "/admin/ads/:id",
+  protect,
+  requireProjexAdmin,
+  asyncHandler(async (req, res) => {
+    await query("DELETE FROM advertisements WHERE id = $1", [req.params.id]);
+    res.json({ success: true, message: "Ad deleted" });
   }),
 );
 

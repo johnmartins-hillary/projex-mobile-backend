@@ -243,7 +243,6 @@
         try {
           const res = await fetch(`${apiBase}/client-portal/view/${token}`);
           const json = await res.json();
-          console.log("Portal data:", JSON.stringify(json.data?.photos));
           if (!json.success) {
             document.getElementById("app").innerHTML = `
             <div class="error">
