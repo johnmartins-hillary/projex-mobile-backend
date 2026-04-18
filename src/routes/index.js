@@ -3575,27 +3575,22 @@ router.post(
         .json({ success: false, message: "Payment not verified" });
     }
 
-    // Check if this reference was already processed
+    // ── Duplicate check — return existing orders if already processed ──
     const { rows: existingOrders } = await query(
-      "SELECT id, order_number FROM marketplace_orders WHERE payment_reference = $1",
+      `SELECT mo.*, sp.business_name AS supplier_name, sp.whatsapp AS supplier_whatsapp,
+        c.name AS company_name,
+        (SELECT json_agg(i.*) FROM marketplace_order_items i WHERE i.order_id = mo.id) AS items
+       FROM marketplace_orders mo
+       JOIN supplier_profiles sp ON sp.id = mo.supplier_id
+       JOIN companies c ON c.id = mo.company_id
+       WHERE mo.payment_reference = $1`,
       [reference],
     );
 
     if (existingOrders.length > 0) {
-      // Already processed — return the existing orders instead of error
-      const { rows: fullOrders } = await query(
-        `SELECT mo.*, sp.business_name AS supplier_name, sp.whatsapp AS supplier_whatsapp,
-      c.name AS company_name,
-      (SELECT json_agg(i.*) FROM marketplace_order_items i WHERE i.order_id = mo.id) AS items
-     FROM marketplace_orders mo
-     JOIN supplier_profiles sp ON sp.id = mo.supplier_id
-     JOIN companies c ON c.id = mo.company_id
-     WHERE mo.payment_reference = $1`,
-        [reference],
-      );
       return res.json({
         success: true,
-        data: { orders: fullOrders, reference },
+        data: { orders: existingOrders, reference },
         message: "Order already processed",
       });
     }
@@ -3609,12 +3604,14 @@ router.post(
         (s, i) => s + Number(i.quantity) * Number(i.unitPrice),
         0,
       );
-      // Fetch commission rate for this supplier
+
+      // Fetch commission settings
       const { rows: commRows } = await query(
         "SELECT * FROM commission_settings LIMIT 1",
       );
       const settings = commRows[0] || { global_rate: 3, minimum_amount: 500 };
 
+      // Fetch supplier custom commission rate
       const { rows: supRows } = await query(
         "SELECT custom_commission_rate FROM supplier_profiles WHERE id = $1",
         [group.supplierId],
@@ -3626,27 +3623,27 @@ router.post(
       );
       const supplierAmount = subtotal - commissionAmount;
 
-      // Get supplier profile id
-      const { rows: supplierRows } = await q(
-        "SELECT id FROM supplier_profiles WHERE id=$1",
+      // Get supplier profile
+      const { rows: supplierRows } = await query(
+        "SELECT id FROM supplier_profiles WHERE id = $1",
         [group.supplierId],
       );
       if (!supplierRows[0]) continue;
 
       // Generate order number
-      const { rows: countRows } = await q(
-        "SELECT COUNT(*) FROM marketplace_orders WHERE company_id=$1",
+      const { rows: countRows } = await query(
+        "SELECT COUNT(*) FROM marketplace_orders WHERE company_id = $1",
         [req.user.companyId],
       );
       const orderNumber = `MKT-${String(parseInt(countRows[0].count) + 1).padStart(4, "0")}`;
 
       // Create escrow transaction
-      const { rows: escrowRows } = await q(
+      const { rows: escrowRows } = await query(
         `INSERT INTO escrow_transactions
-       (order_id, company_id, supplier_id, amount, commission_rate, commission_amount,
-        supplier_amount, status, paystack_reference, held_at)
-       VALUES (NULL, $1, $2, $3, $4, $5, $6, 'HOLDING', $7, NOW())
-       RETURNING *`,
+         (order_id, company_id, supplier_id, amount, commission_rate, commission_amount,
+          supplier_amount, status, paystack_reference, held_at)
+         VALUES (NULL, $1, $2, $3, $4, $5, $6, 'HOLDING', $7, NOW())
+         RETURNING *`,
         [
           req.user.companyId,
           supplierRows[0].id,
@@ -3660,11 +3657,12 @@ router.post(
       const escrow = escrowRows[0];
 
       // Create order
-      const { rows: orderRows } = await q(
+      const { rows: orderRows } = await query(
         `INSERT INTO marketplace_orders
-       (order_number, company_id, supplier_id, project_id, subtotal, delivery_fee, total,
-        delivery_address, notes, payment_status, payment_reference, escrow_id, status, created_by_id)
-       VALUES ($1,$2,$3,$4,$5,0,$5,$6,$7,'PAID',$8,$9,'CONFIRMED',$10) RETURNING *`,
+         (order_number, company_id, supplier_id, project_id, subtotal, delivery_fee, total,
+          delivery_address, notes, payment_status, payment_reference, escrow_id, status, created_by_id)
+         VALUES ($1,$2,$3,$4,$5,0,$5,$6,$7,'PAID',$8,$9,'CONFIRMED',$10)
+         RETURNING *`,
         [
           orderNumber,
           req.user.companyId,
@@ -3680,18 +3678,18 @@ router.post(
       );
       const order = orderRows[0];
 
-      // Update escrow with order id
-      await q("UPDATE escrow_transactions SET order_id=$1 WHERE id=$2", [
-        order.id,
-        escrow.id,
-      ]);
+      // Link escrow to order
+      await query(
+        "UPDATE escrow_transactions SET order_id = $1 WHERE id = $2",
+        [order.id, escrow.id],
+      );
 
-      // Insert items
+      // Insert order items
       for (const item of group.items) {
-        await q(
+        await query(
           `INSERT INTO marketplace_order_items
-         (order_id, product_id, product_name, unit, quantity, unit_price, total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+           (order_id, product_id, product_name, unit, quantity, unit_price, total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [
             order.id,
             item.productId,
@@ -3704,19 +3702,19 @@ router.post(
         );
       }
 
-      // Get full order with items
-      const { rows: fullOrder } = await q(
+      // Get full order with items for response
+      const { rows: fullOrder } = await query(
         `SELECT mo.*, sp.business_name AS supplier_name, sp.whatsapp AS supplier_whatsapp,
-        c.name AS company_name,
-        (SELECT json_agg(i.*) FROM marketplace_order_items i WHERE i.order_id = mo.id) AS items
-       FROM marketplace_orders mo
-       JOIN supplier_profiles sp ON sp.id = mo.supplier_id
-       JOIN companies c ON c.id = mo.company_id
-       WHERE mo.id = $1`,
+          c.name AS company_name,
+          (SELECT json_agg(i.*) FROM marketplace_order_items i WHERE i.order_id = mo.id) AS items
+         FROM marketplace_orders mo
+         JOIN supplier_profiles sp ON sp.id = mo.supplier_id
+         JOIN companies c ON c.id = mo.company_id
+         WHERE mo.id = $1`,
         [order.id],
       );
 
-      // Emit socket event
+      // Emit socket event to supplier and company
       emitNewOrder(req.app, {
         order: fullOrder[0],
         supplierId: supplierRows[0].id,
@@ -3727,9 +3725,8 @@ router.post(
     }
 
     res.json({ success: true, data: { orders: createdOrders, reference } });
-  };),
+  }),
 );
-
 // Confirm delivery — company side
 router.patch(
   "/marketplace/orders/:id/confirm-delivery",
