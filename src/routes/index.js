@@ -3575,6 +3575,31 @@ router.post(
         .json({ success: false, message: "Payment not verified" });
     }
 
+    // Check if this reference was already processed
+    const { rows: existingOrders } = await query(
+      "SELECT id, order_number FROM marketplace_orders WHERE payment_reference = $1",
+      [reference],
+    );
+
+    if (existingOrders.length > 0) {
+      // Already processed — return the existing orders instead of error
+      const { rows: fullOrders } = await query(
+        `SELECT mo.*, sp.business_name AS supplier_name, sp.whatsapp AS supplier_whatsapp,
+      c.name AS company_name,
+      (SELECT json_agg(i.*) FROM marketplace_order_items i WHERE i.order_id = mo.id) AS items
+     FROM marketplace_orders mo
+     JOIN supplier_profiles sp ON sp.id = mo.supplier_id
+     JOIN companies c ON c.id = mo.company_id
+     WHERE mo.payment_reference = $1`,
+        [reference],
+      );
+      return res.json({
+        success: true,
+        data: { orders: fullOrders, reference },
+        message: "Order already processed",
+      });
+    }
+
     const { emitNewOrder } = require("../services/socket.service");
     const createdOrders = [];
 
@@ -3702,7 +3727,7 @@ router.post(
     }
 
     res.json({ success: true, data: { orders: createdOrders, reference } });
-  }),
+  };),
 );
 
 // Confirm delivery — company side
