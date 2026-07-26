@@ -1,0 +1,6 @@
+
+ALTER TABLE project_labour_logs
+  ADD COLUMN IF NOT EXISTS receipt_url TEXT,
+  ADD COLUMN IF NOT EXISTS receipt_public_id TEXT,
+  ADD COLUMN IF NOT EXISTS excess_amount NUMERIC NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS excess_reason TEXT;
